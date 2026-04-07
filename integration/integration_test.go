@@ -222,6 +222,9 @@ func runCompatTest(t *testing.T, feature string, p implPair) TestResult {
 	// ToxID). Such nodes cannot participate in any protocol test, so short-
 	// circuit to not_implemented rather than running a test that will always
 	// error or time out.
+	// A valid Tox ID is 76 hex characters derived from a random key pair and
+	// cannot be all-zeros in practice, so an all-zero ToxID reliably identifies
+	// a stub node that never created a real Tox instance.
 	isStubA := nodeA.Ready.ToxPort == 0 && strings.Trim(nodeA.Ready.ToxID, "0") == ""
 	isStubB := nodeB.Ready.ToxPort == 0 && strings.Trim(nodeB.Ready.ToxID, "0") == ""
 	if isStubA || isStubB {

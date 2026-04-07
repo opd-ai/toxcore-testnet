@@ -36,6 +36,7 @@ func classifyResults(feature, implA, implB string, resA, resB *nodeResult) TestR
 	switch {
 	case resA.Status == "not_implemented" || resB.Status == "not_implemented":
 		status = "not_implemented"
+		exitCode = 2
 		details = fmt.Sprintf("A: %s | B: %s", resA.Details, resB.Details)
 
 	case resA.Status == "timeout" && resB.Status == "timeout":
