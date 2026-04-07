@@ -42,6 +42,10 @@ import (
 	"github.com/opd-ai/toxcore"
 )
 
+// defaultUDPPort is the default UDP port used when the Tox library doesn't
+// expose the actual bound port.
+const defaultUDPPort = 33445
+
 // ---------------------------------------------------------------------------
 // IPC types (must match integration/node.go)
 // ---------------------------------------------------------------------------
@@ -121,8 +125,9 @@ func bytesToHex(b []byte) string {
 
 type node struct {
 	tox            *toxcore.Tox
-	friendRequests [][]byte // public keys of pending friend requests
-	messages       []string // received messages (for friend_message test)
+	friendRequests [][32]byte // public keys of pending friend requests
+	messages       []string   // received messages (for friend_message test)
+	udpPort        int        // port for the ready message
 }
 
 // ---------------------------------------------------------------------------
@@ -135,11 +140,11 @@ func (n *node) testDHTBootstrap(_, _ string) (string, int, string) {
 	// Give the DHT loop time to find the peer we bootstrapped against.
 	deadline := time.Now().Add(30 * time.Second)
 	for time.Now().Before(deadline) {
-		if n.tox.IsConnected() {
+		if n.tox.SelfGetConnectionStatus() != toxcore.ConnectionNone {
 			return "compatible", 0, "DHT peer found"
 		}
 		n.tox.Iterate()
-		time.Sleep(time.Duration(n.tox.IterationInterval()) * time.Millisecond)
+		time.Sleep(n.tox.IterationInterval())
 	}
 	return "conflicting", 3, "DHT bootstrap timed out after 30s"
 }
@@ -149,22 +154,19 @@ func (n *node) testDHTBootstrap(_, _ string) (string, int, string) {
 func (n *node) testFriendRequest(role, peerToxID string) (string, int, string) {
 	switch role {
 	case "initiator":
-		peerAddr, err := hexToBytes(peerToxID)
+		// AddFriend takes the hex address string directly.
+		_, err := n.tox.AddFriend(peerToxID, "testnet-friend-request")
 		if err != nil {
-			return "conflicting", 1, fmt.Sprintf("bad peer address hex: %v", err)
-		}
-		_, err = n.tox.FriendAdd(peerAddr, "testnet-friend-request")
-		if err != nil {
-			return "conflicting", 1, fmt.Sprintf("FriendAdd failed: %v", err)
+			return "conflicting", 1, fmt.Sprintf("AddFriend failed: %v", err)
 		}
 		// Wait for the friend to come online.
 		deadline := time.Now().Add(60 * time.Second)
 		for time.Now().Before(deadline) {
-			if n.tox.FriendIsConnected(0) {
+			if n.tox.GetFriendConnectionStatus(0) != toxcore.ConnectionNone {
 				return "compatible", 0, "friend request accepted and friend is online"
 			}
 			n.tox.Iterate()
-			time.Sleep(time.Duration(n.tox.IterationInterval()) * time.Millisecond)
+			time.Sleep(n.tox.IterationInterval())
 		}
 		return "conflicting", 3, "friend never came online within 60s"
 
@@ -176,7 +178,7 @@ func (n *node) testFriendRequest(role, peerToxID string) (string, int, string) {
 				return "compatible", 0, "friend request received and accepted"
 			}
 			n.tox.Iterate()
-			time.Sleep(time.Duration(n.tox.IterationInterval()) * time.Millisecond)
+			time.Sleep(n.tox.IterationInterval())
 		}
 		return "conflicting", 3, "no friend request received within 60s"
 
@@ -192,24 +194,21 @@ func (n *node) testFriendMessage(role, peerToxID string) (string, int, string) {
 	switch role {
 	case "initiator":
 		// Ensure we are friends first (may already be from testFriendRequest).
-		peerAddr, err := hexToBytes(peerToxID)
-		if err != nil {
-			return "conflicting", 1, fmt.Sprintf("bad peer address hex: %v", err)
-		}
-		friendNum, _ := n.tox.FriendAdd(peerAddr, "testnet")
+		// AddFriend takes the hex address string directly.
+		friendNum, _ := n.tox.AddFriend(peerToxID, "testnet")
 		// Wait for friend to be online.
 		deadline := time.Now().Add(60 * time.Second)
 		for time.Now().Before(deadline) {
-			if n.tox.FriendIsConnected(friendNum) {
+			if n.tox.GetFriendConnectionStatus(friendNum) != toxcore.ConnectionNone {
 				break
 			}
 			n.tox.Iterate()
-			time.Sleep(time.Duration(n.tox.IterationInterval()) * time.Millisecond)
+			time.Sleep(n.tox.IterationInterval())
 		}
-		if !n.tox.FriendIsConnected(friendNum) {
+		if n.tox.GetFriendConnectionStatus(friendNum) == toxcore.ConnectionNone {
 			return "conflicting", 3, "friend never came online"
 		}
-		if err := n.tox.FriendSendMessage(friendNum, toxcore.MessageTypeNormal, testMsg); err != nil {
+		if _, err := n.tox.FriendSendMessage(friendNum, testMsg, toxcore.MessageTypeNormal); err != nil {
 			return "conflicting", 1, fmt.Sprintf("FriendSendMessage failed: %v", err)
 		}
 		// Wait for echo.
@@ -221,19 +220,17 @@ func (n *node) testFriendMessage(role, peerToxID string) (string, int, string) {
 				}
 			}
 			n.tox.Iterate()
-			time.Sleep(time.Duration(n.tox.IterationInterval()) * time.Millisecond)
+			time.Sleep(n.tox.IterationInterval())
 		}
 		return "conflicting", 3, "echo not received within 30s"
 
 	case "responder":
-		// Echo every received message back.
-		n.tox.SetFriendMessageCallback(func(friendNum uint32, msgType toxcore.MessageType, msg string) {
-			_ = n.tox.FriendSendMessage(friendNum, msgType, msg)
-		})
+		// Echo every received message back using simplified callback.
+		// The detailed callback is registered in main; here we just iterate.
 		deadline := time.Now().Add(60 * time.Second)
 		for time.Now().Before(deadline) {
 			n.tox.Iterate()
-			time.Sleep(time.Duration(n.tox.IterationInterval()) * time.Millisecond)
+			time.Sleep(n.tox.IterationInterval())
 		}
 		return "compatible", 0, "responder ran message-echo loop"
 
@@ -310,32 +307,35 @@ func main() {
 	}
 	defer t.Kill()
 
-	n := &node{tox: t}
+	n := &node{tox: t, udpPort: defaultUDPPort}
 
 	// Auto-accept friend requests (needed for responder role).
-	t.SetFriendRequestCallback(func(pubKey []byte, _ string) {
-		if _, err := t.FriendAddNoRequest(pubKey); err != nil {
-			log.Printf("FriendAddNoRequest: %v", err)
+	t.OnFriendRequest(func(pubKey [32]byte, _ string) {
+		if _, err := t.AddFriendByPublicKey(pubKey); err != nil {
+			log.Printf("AddFriendByPublicKey: %v", err)
 		}
 		n.friendRequests = append(n.friendRequests, pubKey)
 	})
 
 	// Buffer incoming messages (needed for friend_message initiator echo test).
-	t.SetFriendMessageCallback(func(_ uint32, _ toxcore.MessageType, msg string) {
+	// Use the simplified callback that matches the API signature.
+	t.OnFriendMessage(func(friendID uint32, msg string) {
 		n.messages = append(n.messages, msg)
+		// Echo message back for responder role.
+		_, _ = t.FriendSendMessage(friendID, msg, toxcore.MessageTypeNormal)
 	})
 
 	// Emit ready.
+	// SelfGetAddress returns hex string; SelfGetPublicKey returns [32]byte.
 	addr := t.SelfGetAddress()
-	dhtKey := t.SelfGetDHTID()
-	port := t.SelfGetUDPPort()
+	dhtKey := t.GetSelfPublicKey()
 
 	emit(readyMsg{
 		Type:    "ready",
 		Impl:    "go-toxcore",
-		ToxID:   bytesToHex(addr),
-		DHTKey:  bytesToHex(dhtKey),
-		ToxPort: int(port),
+		ToxID:   strings.ToUpper(addr),
+		DHTKey:  bytesToHex(dhtKey[:]),
+		ToxPort: n.udpPort,
 	})
 
 	// Handle SIGTERM gracefully.
@@ -367,12 +367,8 @@ func main() {
 				emitError(fmt.Sprintf("bad bootstrap command: %v", err))
 				continue
 			}
-			keyBytes, err := hexToBytes(c.Key)
-			if err != nil {
-				emitError(fmt.Sprintf("bad bootstrap key hex: %v", err))
-				continue
-			}
-			if err := t.Bootstrap(c.Host, uint16(c.Port), keyBytes); err != nil {
+			// Bootstrap takes hex string directly now.
+			if err := t.Bootstrap(c.Host, uint16(c.Port), c.Key); err != nil {
 				emitError(fmt.Sprintf("Bootstrap: %v", err))
 			}
 

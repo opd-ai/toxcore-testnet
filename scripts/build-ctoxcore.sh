@@ -27,11 +27,16 @@ if [[ ! -d "${VENDOR_DIR}/.git" ]]; then
     git clone --depth=1 \
         https://github.com/TokTok/c-toxcore.git \
         "${VENDOR_DIR}"
+    # Initialize submodules (required for third_party/cmp)
+    echo "[build-ctoxcore] Initializing submodules..."
+    git -C "${VENDOR_DIR}" submodule update --init --recursive --depth=1
 else
     echo "[build-ctoxcore] Updating existing c-toxcore checkout..."
     PREVIOUS_HEAD="$(git -C "${VENDOR_DIR}" rev-parse HEAD 2>/dev/null || true)"
     git -C "${VENDOR_DIR}" fetch --depth=1 origin
     git -C "${VENDOR_DIR}" reset --hard FETCH_HEAD
+    # Update submodules in case they changed
+    git -C "${VENDOR_DIR}" submodule update --init --recursive --depth=1
     CURRENT_HEAD="$(git -C "${VENDOR_DIR}" rev-parse HEAD)"
 
     if [[ "${PREVIOUS_HEAD}" != "${CURRENT_HEAD}" ]]; then
