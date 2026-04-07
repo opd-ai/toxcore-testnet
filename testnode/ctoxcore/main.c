@@ -820,17 +820,26 @@ static void dispatch(const char *line)
 }
 
 /* ── main ─────────────────────────────────────────────────────────────────── */
+
+/* Parse a port number from an environment variable string.
+ * Returns default_val if env_val is NULL, empty, non-numeric, or out of
+ * the valid port range [1, 65535]. */
+static int parse_port_env(const char *env_val, int default_val)
+{
+    if (!env_val || !*env_val) { return default_val; }
+    char *end;
+    long v = strtol(env_val, &end, 10);
+    if (*end != '\0' || v < 1 || v > 65535) { return default_val; }
+    return (int)v;
+}
+
 int main(void)
 {
     /* Read port range from environment (set by the integration test harness).
      * Each node gets a unique, non-overlapping 100-port window so parallel
      * test instances don't contend for the same ports. */
-    int start_port = 33445;
-    int end_port   = 33545;
-    const char *sp = getenv("TOX_PORT_START");
-    const char *ep = getenv("TOX_PORT_END");
-    if (sp) { start_port = atoi(sp); }
-    if (ep) { end_port   = atoi(ep); }
+    int start_port = parse_port_env(getenv("TOX_PORT_START"), 33445);
+    int end_port   = parse_port_env(getenv("TOX_PORT_END"),   33545);
 
     /* Initialise Tox. */
     struct Tox_Options *opts = tox_options_new(NULL);

@@ -13,8 +13,15 @@ import (
 )
 
 // portBlock is atomically incremented so every StartNode call gets
-// a non-overlapping 100-port window starting from 33445.
+// a non-overlapping 100-port window starting from baseUDPPort.
 var portBlock uint32
+
+// baseUDPPort is the starting UDP port for the first test node. Each subsequent
+// node gets a window of portWindowSize ports starting from baseUDPPort + N*portWindowSize.
+const (
+	baseUDPPort    = 33445
+	portWindowSize = 100
+)
 
 // nodeReady is the first line a test node writes to stdout once it is
 // initialised and ready to accept commands.
@@ -116,8 +123,8 @@ func (n *TestNode) initializeNodeIO(stdout io.Reader) {
 // label used in reports (e.g. "go-toxcore").
 func StartNode(binaryPath, implName string) (*TestNode, error) {
 	block := atomic.AddUint32(&portBlock, 1)
-	startPort := 33445 + int(block-1)*100
-	endPort := startPort + 99
+	startPort := baseUDPPort + int(block-1)*portWindowSize
+	endPort := startPort + portWindowSize - 1
 
 	cmd := exec.Command(binaryPath)
 	cmd.Stderr = os.Stderr
