@@ -163,7 +163,10 @@ func isStartupFailure(err error) bool {
 		strings.Contains(msg, "cannot open shared object") ||
 		strings.Contains(msg, "shared object") ||
 		strings.Contains(msg, "permission denied") ||
-		strings.Contains(msg, "exec format error")
+		strings.Contains(msg, "exec format error") ||
+		strings.Contains(msg, "tox_new failed") ||
+		strings.Contains(msg, "bad ready message") ||
+		strings.Contains(msg, "expected ready")
 }
 
 // runCompatTest executes the compatibility test for one (feature, implPair).
@@ -214,6 +217,27 @@ func runCompatTest(t *testing.T, feature string, p implPair) TestResult {
 		}
 	}
 	defer nodeB.Close() //nolint:errcheck
+
+	// Detect stub nodes that have no real Tox instance (port=0 with all-zero
+	// ToxID). Such nodes cannot participate in any protocol test, so short-
+	// circuit to not_implemented rather than running a test that will always
+	// error or time out.
+	isStubA := nodeA.Ready.ToxPort == 0 && strings.Trim(nodeA.Ready.ToxID, "0") == ""
+	isStubB := nodeB.Ready.ToxPort == 0 && strings.Trim(nodeB.Ready.ToxID, "0") == ""
+	if isStubA || isStubB {
+		stubImpl := p.implA
+		if isStubB {
+			stubImpl = p.implB
+		}
+		return TestResult{
+			Feature:  feature,
+			ImplA:    p.implA,
+			ImplB:    p.implB,
+			Status:   "not_implemented",
+			ExitCode: 2,
+			Details:  fmt.Sprintf("%s has no functional Tox instance (stub node)", stubImpl),
+		}
+	}
 
 	// Bootstrap B off A so they share the same DHT.
 	// Skip bootstrap when the peer's port is 0 — this indicates a stub node

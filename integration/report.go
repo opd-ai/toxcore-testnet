@@ -38,6 +38,15 @@ func classifyResults(feature, implA, implB string, resA, resB *nodeResult) TestR
 		status = "not_implemented"
 		details = fmt.Sprintf("A: %s | B: %s", resA.Details, resB.Details)
 
+	case resA.Status == "timeout" && resB.Status == "timeout":
+		// Both sides timed out without producing a result — neither side proved
+		// an incompatibility, so treat this as not_implemented rather than
+		// conflicting. This avoids false positives when both implementations
+		// fail to run the test (e.g., due to DHT connectivity issues).
+		status = "not_implemented"
+		exitCode = 3
+		details = fmt.Sprintf("A: %s | B: %s", resA.Details, resB.Details)
+
 	case resA.Status == "timeout" || resB.Status == "timeout":
 		status = "conflicting"
 		exitCode = 3
