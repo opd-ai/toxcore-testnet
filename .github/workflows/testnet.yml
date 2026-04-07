@@ -107,9 +107,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: c-testnode
-          path: |
-            bin/c-testnode
-            bin/lib/
+          path: bin/c-testnode
           retention-days: 1
 
   # ── 3. Build: Rust test node ────────────────────────────────────────────────
@@ -200,6 +198,7 @@ jobs:
         id: run_tests
         run: |
           set -o pipefail
+          export LD_LIBRARY_PATH="${PWD}/bin/lib${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
           go test -v -json -timeout 25m ./integration/... \
             -args \
               -go-node="${PWD}/bin/go-testnode" \

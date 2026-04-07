@@ -4,30 +4,45 @@ project(c-testnode C)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 
-# ── Find toxcore ─────────────────────────────────────────────────────────────
+# ── Find toxcore ────────────────────────────────────────────────────────────
 # The build script (scripts/build-ctoxcore.sh) installs c-toxcore into
 # ${CMAKE_PREFIX_PATH} before invoking cmake, so pkg-config should find it.
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(TOXCORE REQUIRED toxcore)
 
-# ── Target ────────────────────────────────────────────────────────────────────
+# ── Target ──────────────────────────────────────────────────────────────────
 add_executable(c-testnode main.c)
 
 target_include_directories(c-testnode PRIVATE ${TOXCORE_INCLUDE_DIRS})
-# Use TOXCORE_LINK_LIBRARIES for proper library path handling
 target_link_directories(c-testnode PRIVATE ${TOXCORE_LIBRARY_DIRS})
-target_link_libraries(c-testnode PRIVATE ${TOXCORE_LIBRARIES})
+
+# Prefer static linking: look for the .a archive first, fall back to the
+# pkg-config libraries if the static archive is not present.
+find_library(TOXCORE_STATIC_LIB
+    NAMES libtoxcore.a
+    PATHS ${TOXCORE_LIBRARY_DIRS}
+    NO_DEFAULT_PATH
+)
+if(TOXCORE_STATIC_LIB)
+    # Static link: toxcore + its transitive dependencies (libsodium, pthreads)
+    target_link_libraries(c-testnode PRIVATE
+        ${TOXCORE_STATIC_LIB}
+        sodium
+        pthread
+    )
+    message(STATUS "Linking c-testnode statically against ${TOXCORE_STATIC_LIB}")
+else()
+    target_link_libraries(c-testnode PRIVATE ${TOXCORE_LIBRARIES})
+    message(STATUS "Linking c-testnode dynamically against ${TOXCORE_LIBRARIES}")
+endif()
+
 target_compile_options(c-testnode PRIVATE ${TOXCORE_CFLAGS_OTHER} -Wall -Wextra)
 
-# Set RPATH so the binary can find libtoxcore at runtime.
-# BUILD_RPATH uses the absolute path so the binary works in the build tree.
-# INSTALL_RPATH uses $ORIGIN/lib so the installed binary looks for shared
-# libraries in a lib/ directory next to itself — this makes the artifact
-# self-contained and portable across CI jobs.
+# Set RPATH — only relevant when dynamically linked, but harmless otherwise.
 set_target_properties(c-testnode PROPERTIES
     BUILD_RPATH "${TOXCORE_LIBRARY_DIRS}"
     INSTALL_RPATH "$ORIGIN/lib"
 )
 
-# ── Install ───────────────────────────────────────────────────────────────────
+# ── Install ─────────────────────────────────────────────────────────────────
 install(TARGETS c-testnode RUNTIME DESTINATION bin)

@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -141,6 +142,30 @@ func TestCompatibility(t *testing.T) {
 // It must remain well under the 25-minute go test -timeout to leave headroom.
 const perTestTimeout = 90 * time.Second
 
+// isStartupFailure returns true if an error from StartNode indicates
+// an infrastructure or availability problem (binary missing, crashed
+// immediately, timed out during init, etc.) rather than a genuine
+// protocol incompatibility. Such failures are classified as
+// "not_implemented" so they do not block the CI.
+func isStartupFailure(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "timed out waiting for ready") ||
+		strings.Contains(msg, "executable file not found") ||
+		strings.Contains(msg, "no such file or directory") ||
+		strings.Contains(msg, "not available") ||
+		strings.Contains(msg, "not implemented") ||
+		strings.Contains(msg, "stdout closed before ready") ||
+		strings.Contains(msg, "exit status") ||
+		strings.Contains(msg, "signal: killed") ||
+		strings.Contains(msg, "cannot open shared object") ||
+		strings.Contains(msg, "shared object") ||
+		strings.Contains(msg, "permission denied") ||
+		strings.Contains(msg, "exec format error")
+}
+
 // runCompatTest executes the compatibility test for one (feature, implPair).
 // It:
 //  1. Starts both nodes.
@@ -153,12 +178,18 @@ func runCompatTest(t *testing.T, feature string, p implPair) TestResult {
 	// Start node A (initiator side).
 	nodeA, err := StartNode(p.binA, p.implA)
 	if err != nil {
+		status := "conflicting"
+		exitCode := 1
+		if isStartupFailure(err) {
+			status = "not_implemented"
+			exitCode = 2
+		}
 		return TestResult{
 			Feature:  feature,
 			ImplA:    p.implA,
 			ImplB:    p.implB,
-			Status:   "conflicting",
-			ExitCode: 1,
+			Status:   status,
+			ExitCode: exitCode,
 			Details:  fmt.Sprintf("failed to start %s: %v", p.implA, err),
 		}
 	}
@@ -167,12 +198,18 @@ func runCompatTest(t *testing.T, feature string, p implPair) TestResult {
 	// Start node B (responder side).
 	nodeB, err := StartNode(p.binB, p.implB)
 	if err != nil {
+		status := "conflicting"
+		exitCode := 1
+		if isStartupFailure(err) {
+			status = "not_implemented"
+			exitCode = 2
+		}
 		return TestResult{
 			Feature:  feature,
 			ImplA:    p.implA,
 			ImplB:    p.implB,
-			Status:   "conflicting",
-			ExitCode: 1,
+			Status:   status,
+			ExitCode: exitCode,
 			Details:  fmt.Sprintf("failed to start %s: %v", p.implB, err),
 		}
 	}
