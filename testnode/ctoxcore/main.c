@@ -822,12 +822,22 @@ static void dispatch(const char *line)
 /* ── main ─────────────────────────────────────────────────────────────────── */
 int main(void)
 {
+    /* Read port range from environment (set by the integration test harness).
+     * Each node gets a unique, non-overlapping 100-port window so parallel
+     * test instances don't contend for the same ports. */
+    int start_port = 33445;
+    int end_port   = 33545;
+    const char *sp = getenv("TOX_PORT_START");
+    const char *ep = getenv("TOX_PORT_END");
+    if (sp) { start_port = atoi(sp); }
+    if (ep) { end_port   = atoi(ep); }
+
     /* Initialise Tox. */
     struct Tox_Options *opts = tox_options_new(NULL);
     tox_options_set_ipv6_enabled(opts, false);
     tox_options_set_udp_enabled(opts, true);
-    tox_options_set_start_port(opts, 33445);
-    tox_options_set_end_port(opts, 33545);
+    tox_options_set_start_port(opts, (uint16_t)start_port);
+    tox_options_set_end_port(opts, (uint16_t)end_port);
 
     TOX_ERR_NEW err;
     g_tox = tox_new(opts, &err);

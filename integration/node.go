@@ -8,8 +8,13 @@ import (
 	"os"
 	"os/exec"
 	"sync"
+	"sync/atomic"
 	"time"
 )
+
+// portBlock is atomically incremented so every StartNode call gets
+// a non-overlapping 100-port window starting from 33445.
+var portBlock uint32
 
 // nodeReady is the first line a test node writes to stdout once it is
 // initialised and ready to accept commands.
@@ -110,8 +115,16 @@ func (n *TestNode) initializeNodeIO(stdout io.Reader) {
 // returns a TestNode ready to accept commands. implName is the human-readable
 // label used in reports (e.g. "go-toxcore").
 func StartNode(binaryPath, implName string) (*TestNode, error) {
+	block := atomic.AddUint32(&portBlock, 1)
+	startPort := 33445 + int(block-1)*100
+	endPort := startPort + 99
+
 	cmd := exec.Command(binaryPath)
 	cmd.Stderr = os.Stderr
+	cmd.Env = append(os.Environ(),
+		fmt.Sprintf("TOX_PORT_START=%d", startPort),
+		fmt.Sprintf("TOX_PORT_END=%d", endPort),
+	)
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
