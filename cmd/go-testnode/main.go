@@ -35,6 +35,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -42,11 +43,10 @@ import (
 	"github.com/opd-ai/toxcore"
 )
 
-// defaultUDPPortStart and defaultUDPPortEnd define the port range used for UDP binding.
-// Using a range (like c-testnode) allows multiple test nodes to run simultaneously.
-// NOTE: Since opd-ai/toxcore doesn't expose SelfGetUDPPort(), we fall back to reporting
-// the start port. This is acceptable because the peer bootstraps symmetrically and the
-// actual connectivity is verified by the test itself.
+// defaultUDPPortStart and defaultUDPPortEnd are fallback values used when
+// TOX_PORT_START / TOX_PORT_END environment variables are not set.
+// The integration test harness always sets these env vars to give each node
+// a unique, non-overlapping port range so parallel tests don't collide.
 const (
 	defaultUDPPortStart = 33445
 	defaultUDPPortEnd   = 33545
@@ -364,30 +364,48 @@ func main() {
 	log.SetOutput(os.Stderr)
 	log.SetFlags(0)
 
+	// Read port range from environment (set by the integration test harness).
+	// Each node gets a unique, non-overlapping port so parallel test instances
+	// don't contend for the same ports.
+	startPort := getEnvInt("TOX_PORT_START", defaultUDPPortStart)
+	endPort := getEnvInt("TOX_PORT_END", defaultUDPPortEnd)
+
+	// Validate parsed values. Fall back to defaults for out-of-range or
+	// inverted ranges so the node always starts with sane options.
+	if startPort < 1 || startPort > 65535 {
+		log.Printf("go-testnode: invalid TOX_PORT_START=%d, using default %d", startPort, defaultUDPPortStart)
+		startPort = defaultUDPPortStart
+	}
+	if endPort < 1 || endPort > 65535 {
+		log.Printf("go-testnode: invalid TOX_PORT_END=%d, using default %d", endPort, defaultUDPPortEnd)
+		endPort = defaultUDPPortEnd
+	}
+	if endPort < startPort {
+		log.Printf("go-testnode: TOX_PORT_END=%d < TOX_PORT_START=%d, using defaults", endPort, startPort)
+		startPort = defaultUDPPortStart
+		endPort = defaultUDPPortEnd
+	}
+
 	// Initialise Tox.
 	opts := toxcore.NewOptions()
 	opts.IPv6Enabled = false
 	opts.UDPEnabled = true
-	// Use a port range (like c-testnode) to allow multiple nodes to run simultaneously.
-	// Since opd-ai/toxcore doesn't expose SelfGetUDPPort(), we probe ports sequentially
-	// and report the first successfully bound port.
-	opts.StartPort = defaultUDPPortStart
-	opts.EndPort = defaultUDPPortEnd
+	opts.StartPort = startPort
+	opts.EndPort = endPort
 
-	log.Printf("go-testnode: attempting to bind UDP port range %d-%d", defaultUDPPortStart, defaultUDPPortEnd)
+	log.Printf("go-testnode: attempting to bind UDP port range %d-%d", startPort, endPort)
 
 	t, err := toxcore.New(opts)
 	if err != nil {
 		log.Printf("go-testnode: port binding failed: %v", err)
-		emitError(fmt.Sprintf("toxcore.New: %v (port range %d-%d may be exhausted)", err, defaultUDPPortStart, defaultUDPPortEnd))
+		emitError(fmt.Sprintf("toxcore.New: %v (port range %d-%d may be exhausted)", err, startPort, endPort))
 		os.Exit(1)
 	}
 	defer t.Kill()
 
-	// Report the start port since we can't query the actual bound port.
-	// The symmetric bootstrap in the test harness ensures connectivity works
-	// regardless of which port was actually bound.
-	reportedPort := defaultUDPPortStart
+	// Report the start port — each node now has a unique range assigned by the
+	// harness, so startPort reliably identifies this node's DHT endpoint.
+	reportedPort := startPort
 	log.Printf("go-testnode: initialized successfully, reporting port %d", reportedPort)
 
 	n := &node{tox: t, udpPort: reportedPort}
@@ -444,4 +462,18 @@ func main() {
 	if err := scanner.Err(); err != nil {
 		emitError(fmt.Sprintf("stdin scanner: %v", err))
 	}
+}
+
+// getEnvInt reads an integer from an environment variable, returning defaultVal
+// if the variable is unset or cannot be parsed.
+func getEnvInt(key string, defaultVal int) int {
+	s := os.Getenv(key)
+	if s == "" {
+		return defaultVal
+	}
+	v, err := strconv.Atoi(s)
+	if err != nil {
+		return defaultVal
+	}
+	return v
 }
