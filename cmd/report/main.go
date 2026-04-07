@@ -142,8 +142,8 @@ func loadResults() ([]TestResult, error) {
 		if err != nil {
 			log.Printf("warning: could not read results file: %v", err)
 		} else {
-			for _, r := range rs {
-				add(r)
+			for _, res := range rs {
+				add(res)
 			}
 		}
 	}
@@ -154,8 +154,8 @@ func loadResults() ([]TestResult, error) {
 		if err != nil {
 			log.Printf("warning: could not parse go test output: %v", err)
 		} else {
-			for _, r := range rs {
-				add(r)
+			for _, res := range rs {
+				add(res)
 			}
 		}
 	}
@@ -177,7 +177,7 @@ func loadResults() ([]TestResult, error) {
 func loadResultsJSON(path string) ([]TestResult, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("read results file %s: %w", path, err)
 	}
 	var rs []TestResult
 	if err := json.Unmarshal(data, &rs); err != nil {
@@ -194,7 +194,7 @@ func loadResultsJSON(path string) ([]TestResult, error) {
 func parseGoTestJSON(path string) ([]TestResult, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("open test output %s: %w", path, err)
 	}
 	defer f.Close()
 
@@ -221,7 +221,10 @@ func parseGoTestJSON(path string) ([]TestResult, error) {
 		}
 		results = append(results, result)
 	}
-	return results, scanner.Err()
+	if err := scanner.Err(); err != nil {
+		return results, fmt.Errorf("scan test output %s: %w", path, err)
+	}
+	return results, nil
 }
 
 // ---------------------------------------------------------------------------
@@ -268,9 +271,12 @@ func writeJSON(results []TestResult, generatedAt string) error {
 	}
 	data, err := json.MarshalIndent(artifact, "", "  ")
 	if err != nil {
-		return err
+		return fmt.Errorf("marshal JSON report: %w", err)
 	}
-	return os.WriteFile(*flagJSONOut, data, 0o644)
+	if err := os.WriteFile(*flagJSONOut, data, 0o644); err != nil {
+		return fmt.Errorf("write JSON report to %s: %w", *flagJSONOut, err)
+	}
+	return nil
 }
 
 // ---------------------------------------------------------------------------
@@ -345,5 +351,8 @@ func writeMarkdown(results []TestResult, generatedAt string) error {
 	sb.WriteString("\n> Report generated deterministically by test harness logic. ")
 	sb.WriteString("No LLM, AI model, or generative tool was used.\n")
 
-	return os.WriteFile(*flagMDOut, []byte(sb.String()), 0o644)
+	if err := os.WriteFile(*flagMDOut, []byte(sb.String()), 0o644); err != nil {
+		return fmt.Errorf("write Markdown report to %s: %w", *flagMDOut, err)
+	}
+	return nil
 }

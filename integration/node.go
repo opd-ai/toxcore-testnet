@@ -145,10 +145,13 @@ func (n *TestNode) sendCmd(v interface{}) error {
 	defer n.mu.Unlock()
 	data, err := json.Marshal(v)
 	if err != nil {
-		return err
+		return fmt.Errorf("%s: marshal command: %w", n.impl, err)
 	}
 	_, err = fmt.Fprintf(n.stdin, "%s\n", data)
-	return err
+	if err != nil {
+		return fmt.Errorf("%s: write command: %w", n.impl, err)
+	}
+	return nil
 }
 
 // Bootstrap instructs the node to join the DHT via the given peer.
@@ -165,7 +168,7 @@ func (n *TestNode) RunTest(feature, role, peerToxID string, timeout time.Duratio
 		Role:      role,
 		PeerToxID: peerToxID,
 	}); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%s: send run_test command: %w", n.impl, err)
 	}
 
 	deadline := time.After(timeout)
@@ -216,11 +219,14 @@ func (n *TestNode) RunTest(feature, role, peerToxID string, timeout time.Duratio
 // before exiting; the done channel is closed after Wait returns so the
 // stdout-reader goroutine keeps draining the pipe and prevents a deadlock.
 func (n *TestNode) Close() error {
-	err := n.sendCmd(cmdShutdown{Cmd: "shutdown"})
+	sendErr := n.sendCmd(cmdShutdown{Cmd: "shutdown"})
 	waitErr := n.cmd.Wait()
 	close(n.done)
-	if err != nil {
-		return err
+	if sendErr != nil {
+		return fmt.Errorf("%s: send shutdown: %w", n.impl, sendErr)
 	}
-	return waitErr
+	if waitErr != nil {
+		return fmt.Errorf("%s: wait for exit: %w", n.impl, waitErr)
+	}
+	return nil
 }
