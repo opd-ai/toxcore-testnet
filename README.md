@@ -55,7 +55,7 @@ cargo build --release
 cp target/release/rust-testnode ../../bin/
 ```
 
-**Note**: The Rust test node currently reports all tests as `not_implemented` because the tox-rs library has restructured its API and no longer provides a high-level `Tox` struct.
+> ⚠️ **Rust Support Status**: The Rust test node currently reports all tests as `not_implemented` because the tox-rs library has restructured its API and no longer provides a high-level `Tox` struct. The testnet still includes the Rust node in CI for forward compatibility — once tox-rs restores high-level APIs, the node will be updated. See [ROADMAP.md](ROADMAP.md#priority-3-restore-full-rust-node-implementation) for tracking.
 
 ## Running Tests
 
