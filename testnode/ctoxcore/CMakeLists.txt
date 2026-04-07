@@ -19,10 +19,14 @@ target_link_directories(c-testnode PRIVATE ${TOXCORE_LIBRARY_DIRS})
 target_link_libraries(c-testnode PRIVATE ${TOXCORE_LIBRARIES})
 target_compile_options(c-testnode PRIVATE ${TOXCORE_CFLAGS_OTHER} -Wall -Wextra)
 
-# Set RPATH so the binary can find libtoxcore at runtime
+# Set RPATH so the binary can find libtoxcore at runtime.
+# BUILD_RPATH uses the absolute path so the binary works in the build tree.
+# INSTALL_RPATH uses $ORIGIN/lib so the installed binary looks for shared
+# libraries in a lib/ directory next to itself — this makes the artifact
+# self-contained and portable across CI jobs.
 set_target_properties(c-testnode PROPERTIES
     BUILD_RPATH "${TOXCORE_LIBRARY_DIRS}"
-    INSTALL_RPATH "${TOXCORE_LIBRARY_DIRS}"
+    INSTALL_RPATH "$ORIGIN/lib"
 )
 
 # ── Install ───────────────────────────────────────────────────────────────────

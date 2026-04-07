@@ -179,26 +179,32 @@ func runCompatTest(t *testing.T, feature string, p implPair) TestResult {
 	defer nodeB.Close() //nolint:errcheck
 
 	// Bootstrap B off A so they share the same DHT.
-	if err := nodeB.Bootstrap("127.0.0.1", nodeA.Ready.ToxPort, nodeA.Ready.DHTKey); err != nil {
-		return TestResult{
-			Feature:  feature,
-			ImplA:    p.implA,
-			ImplB:    p.implB,
-			Status:   "conflicting",
-			ExitCode: 1,
-			Details:  fmt.Sprintf("bootstrap failed: %v", err),
+	// Skip bootstrap when the peer's port is 0 — this indicates a stub node
+	// that has no real Tox instance (e.g. tox-rs).
+	if nodeA.Ready.ToxPort != 0 {
+		if err := nodeB.Bootstrap("127.0.0.1", nodeA.Ready.ToxPort, nodeA.Ready.DHTKey); err != nil {
+			return TestResult{
+				Feature:  feature,
+				ImplA:    p.implA,
+				ImplB:    p.implB,
+				Status:   "conflicting",
+				ExitCode: 1,
+				Details:  fmt.Sprintf("bootstrap failed: %v", err),
+			}
 		}
 	}
 
 	// Also bootstrap A off B so the connection is symmetric.
-	if err := nodeA.Bootstrap("127.0.0.1", nodeB.Ready.ToxPort, nodeB.Ready.DHTKey); err != nil {
-		return TestResult{
-			Feature:  feature,
-			ImplA:    p.implA,
-			ImplB:    p.implB,
-			Status:   "conflicting",
-			ExitCode: 1,
-			Details:  fmt.Sprintf("reverse bootstrap failed: %v", err),
+	if nodeB.Ready.ToxPort != 0 {
+		if err := nodeA.Bootstrap("127.0.0.1", nodeB.Ready.ToxPort, nodeB.Ready.DHTKey); err != nil {
+			return TestResult{
+				Feature:  feature,
+				ImplA:    p.implA,
+				ImplB:    p.implB,
+				Status:   "conflicting",
+				ExitCode: 1,
+				Details:  fmt.Sprintf("reverse bootstrap failed: %v", err),
+			}
 		}
 	}
 

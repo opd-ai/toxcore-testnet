@@ -88,4 +88,16 @@ cmake -B "${TESTNODE_BUILD}" \
 cmake --build "${TESTNODE_BUILD}" --parallel "$(nproc)"
 cmake --install "${TESTNODE_BUILD}"
 
+# ── Bundle shared libraries alongside the binary ──────────────────────────
+# Copy libtoxcore shared libraries into bin/lib/ so the installed binary
+# (which has RPATH set to $ORIGIN/lib) can find them at runtime.  This makes
+# the bin/ directory a self-contained, portable artefact.
+LIB_DIR="${BIN_DIR}/lib"
+mkdir -p "${LIB_DIR}"
+echo "[build-ctoxcore] Bundling libtoxcore shared libraries into ${LIB_DIR}..."
+# Copy all libtoxcore shared-library files (versioned symlinks included).
+for f in "${INSTALL_DIR}"/lib/libtoxcore.so*; do
+    [ -e "$f" ] && cp -a "$f" "${LIB_DIR}/"
+done
+
 echo "[build-ctoxcore] c-testnode installed to ${BIN_DIR}/c-testnode"
