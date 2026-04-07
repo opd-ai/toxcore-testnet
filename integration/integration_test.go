@@ -151,7 +151,7 @@ func isStartupFailure(err error) bool {
 	if err == nil {
 		return false
 	}
-	msg := err.Error()
+	msg := strings.ToLower(err.Error())
 	return strings.Contains(msg, "timed out waiting for ready") ||
 		strings.Contains(msg, "executable file not found") ||
 		strings.Contains(msg, "no such file or directory") ||
@@ -162,7 +162,8 @@ func isStartupFailure(err error) bool {
 		strings.Contains(msg, "signal: killed") ||
 		strings.Contains(msg, "cannot open shared object") ||
 		strings.Contains(msg, "shared object") ||
-		strings.Contains(msg, "No such file")
+		strings.Contains(msg, "permission denied") ||
+		strings.Contains(msg, "exec format error")
 }
 
 // runCompatTest executes the compatibility test for one (feature, implPair).
@@ -178,15 +179,17 @@ func runCompatTest(t *testing.T, feature string, p implPair) TestResult {
 	nodeA, err := StartNode(p.binA, p.implA)
 	if err != nil {
 		status := "conflicting"
+		exitCode := 1
 		if isStartupFailure(err) {
 			status = "not_implemented"
+			exitCode = 2
 		}
 		return TestResult{
 			Feature:  feature,
 			ImplA:    p.implA,
 			ImplB:    p.implB,
 			Status:   status,
-			ExitCode: 1,
+			ExitCode: exitCode,
 			Details:  fmt.Sprintf("failed to start %s: %v", p.implA, err),
 		}
 	}
@@ -196,15 +199,17 @@ func runCompatTest(t *testing.T, feature string, p implPair) TestResult {
 	nodeB, err := StartNode(p.binB, p.implB)
 	if err != nil {
 		status := "conflicting"
+		exitCode := 1
 		if isStartupFailure(err) {
 			status = "not_implemented"
+			exitCode = 2
 		}
 		return TestResult{
 			Feature:  feature,
 			ImplA:    p.implA,
 			ImplB:    p.implB,
 			Status:   status,
-			ExitCode: 1,
+			ExitCode: exitCode,
 			Details:  fmt.Sprintf("failed to start %s: %v", p.implB, err),
 		}
 	}
