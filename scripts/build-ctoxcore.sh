@@ -49,7 +49,7 @@ fi
 
 # ── Build c-toxcore ────────────────────────────────────────────────────────
 BUILD_DIR="${VENDOR_DIR}/_build"
-if [[ ! -f "${BUILD_DIR}/libtoxcore.a" && ! -f "${BUILD_DIR}/libtoxcore.so" ]]; then
+if [[ ! -f "${BUILD_DIR}/libtoxcore.a" ]]; then
     echo "[build-ctoxcore] Configuring c-toxcore with CMake..."
     cmake -B "${BUILD_DIR}" \
         -G Ninja \
@@ -57,7 +57,7 @@ if [[ ! -f "${BUILD_DIR}/libtoxcore.a" && ! -f "${BUILD_DIR}/libtoxcore.so" ]]; 
         -DCMAKE_INSTALL_PREFIX="${INSTALL_DIR}" \
         -DBUILD_TOXAV=OFF \
         -DENABLE_STATIC=ON \
-        -DENABLE_SHARED=ON \
+        -DENABLE_SHARED=OFF \
         "${VENDOR_DIR}"
 
     echo "[build-ctoxcore] Building c-toxcore..."
@@ -88,16 +88,14 @@ cmake -B "${TESTNODE_BUILD}" \
 cmake --build "${TESTNODE_BUILD}" --parallel "$(nproc)"
 cmake --install "${TESTNODE_BUILD}"
 
-# ── Bundle shared libraries alongside the binary ──────────────────────────
-# Copy libtoxcore shared libraries into bin/lib/ so the installed binary
-# (which has RPATH set to $ORIGIN/lib) can find them at runtime.  This makes
-# the bin/ directory a self-contained, portable artifact.
-LIB_DIR="${BIN_DIR}/lib"
-mkdir -p "${LIB_DIR}"
-echo "[build-ctoxcore] Bundling libtoxcore shared libraries into ${LIB_DIR}..."
-# Copy all libtoxcore shared-library files (versioned symlinks included).
-for f in "${INSTALL_DIR}"/lib/libtoxcore.so*; do
-    [ -e "$f" ] && cp -a "$f" "${LIB_DIR}/"
-done
+# ── Verify static binary ──────────────────────────────────────────────────
+# With ENABLE_SHARED=OFF the c-testnode links libtoxcore statically, so no
+# shared-library bundling is needed. Verify the binary does not depend on
+# libtoxcore.so at runtime.
+if ldd "${BIN_DIR}/c-testnode" 2>/dev/null | grep -q libtoxcore; then
+    echo "[build-ctoxcore] WARNING: c-testnode still dynamically links libtoxcore"
+else
+    echo "[build-ctoxcore] OK: c-testnode does not dynamically link libtoxcore"
+fi
 
 echo "[build-ctoxcore] c-testnode installed to ${BIN_DIR}/c-testnode"

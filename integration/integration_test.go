@@ -157,7 +157,12 @@ func isStartupFailure(err error) bool {
 		strings.Contains(msg, "no such file or directory") ||
 		strings.Contains(msg, "not available") ||
 		strings.Contains(msg, "not implemented") ||
-		strings.Contains(msg, "stdout closed before ready")
+		strings.Contains(msg, "stdout closed before ready") ||
+		strings.Contains(msg, "exit status") ||
+		strings.Contains(msg, "signal: killed") ||
+		strings.Contains(msg, "cannot open shared object") ||
+		strings.Contains(msg, "shared object") ||
+		strings.Contains(msg, "No such file")
 }
 
 // runCompatTest executes the compatibility test for one (feature, implPair).
