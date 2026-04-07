@@ -1,0 +1,245 @@
+name: Toxcore Cross-Implementation Testnet
+
+# ── Triggers ──────────────────────────────────────────────────────────────────
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  schedule:
+    # Nightly at 02:00 UTC — catches upstream implementation drift.
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+
+# ── Permissions ───────────────────────────────────────────────────────────────
+permissions:
+  contents: read
+
+# ── Global environment ────────────────────────────────────────────────────────
+env:
+  GO_VERSION: '1.22'
+  RUST_VERSION: 'stable'
+  # Intermediate results file path consumed by the report generator.
+  TESTNET_RESULTS: ${{ github.workspace }}/testnet-results.json
+
+# ==============================================================================
+# Jobs
+# ==============================================================================
+jobs:
+
+  # ── 1. Build: Go test node ──────────────────────────────────────────────────
+  build-go-node:
+    name: Build / Go test node (opd-ai/toxcore)
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout testnet repo
+        uses: actions/checkout@v4
+
+      - name: Set up Go ${{ env.GO_VERSION }}
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: cmd/go-testnode/go.mod
+
+      - name: Clone opd-ai/toxcore
+        run: |
+          git clone --depth=1 \
+            https://github.com/opd-ai/toxcore.git \
+            vendor/opd-ai-toxcore
+
+      - name: Wire replace directive and tidy
+        working-directory: cmd/go-testnode
+        run: |
+          go mod edit -replace github.com/opd-ai/toxcore=../../vendor/opd-ai-toxcore
+          go mod tidy
+
+      - name: Build go-testnode binary
+        working-directory: cmd/go-testnode
+        run: |
+          mkdir -p ../../bin
+          go build -v -o ../../bin/go-testnode .
+
+      - name: Upload go-testnode artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: go-testnode
+          path: bin/go-testnode
+          retention-days: 1
+
+  # ── 2. Build: C test node ───────────────────────────────────────────────────
+  build-c-node:
+    name: Build / C test node (TokTok/c-toxcore)
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout testnet repo
+        uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -yq \
+            cmake ninja-build libsodium-dev pkg-config
+
+      # Cache the compiled c-toxcore library; key includes the build script
+      # so any script change invalidates the cache.
+      - name: Cache c-toxcore build
+        uses: actions/cache@v4
+        id: cache-ctoxcore
+        with:
+          path: |
+            vendor/c-toxcore
+            vendor/c-toxcore-install
+          key: c-toxcore-${{ runner.os }}-${{ hashFiles('scripts/build-ctoxcore.sh') }}-v1
+
+      - name: Build c-toxcore + C test node
+        run: bash scripts/build-ctoxcore.sh
+
+      - name: Upload c-testnode artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: c-testnode
+          path: bin/c-testnode
+          retention-days: 1
+
+  # ── 3. Build: Rust test node ────────────────────────────────────────────────
+  build-rust-node:
+    name: Build / Rust test node (tox-rs/tox)
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout testnet repo
+        uses: actions/checkout@v4
+
+      - name: Install Rust ${{ env.RUST_VERSION }}
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+
+      # rust-cache scopes by Cargo.lock hash → cache is invalidated whenever
+      # any dependency version changes.
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: testnode/tox_rs
+
+      - name: Build rust-testnode binary
+        run: bash scripts/build-tox-rs.sh
+
+      - name: Upload rust-testnode artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: rust-testnode
+          path: bin/rust-testnode
+          retention-days: 1
+
+  # ── 4. Integration tests ─────────────────────────────────────────────────────
+  #
+  # Runs go test -json against all three implementation pairs.
+  # This job has a strict 28-minute timeout to stay within the 30-minute budget,
+  # even on a slow GitHub-hosted runner.
+  integration-tests:
+    name: Integration Tests (all 3 pairs × all features)
+    runs-on: ubuntu-22.04
+    needs: [build-go-node, build-c-node, build-rust-node]
+    timeout-minutes: 28
+
+    steps:
+      - name: Checkout testnet repo
+        uses: actions/checkout@v4
+
+      - name: Set up Go ${{ env.GO_VERSION }}
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Install runtime shared libraries
+        run: |
+          sudo apt-get update -q
+          # libsodium23 is the shared-library runtime package.
+          sudo apt-get install -yq libsodium23
+
+      - name: Download go-testnode
+        uses: actions/download-artifact@v4
+        with:
+          name: go-testnode
+          path: bin
+
+      - name: Download c-testnode
+        uses: actions/download-artifact@v4
+        with:
+          name: c-testnode
+          path: bin
+
+      - name: Download rust-testnode
+        uses: actions/download-artifact@v4
+        with:
+          name: rust-testnode
+          path: bin
+
+      - name: Make binaries executable
+        run: chmod +x bin/go-testnode bin/c-testnode bin/rust-testnode
+
+      # Run the full compatibility matrix.  continue-on-error is intentional:
+      # failing tests should still produce a report rather than stopping the job.
+      - name: Run cross-implementation tests
+        id: run_tests
+        run: |
+          go test -v -json -timeout 25m ./integration/... \
+            -args \
+              -go-node="${PWD}/bin/go-testnode" \
+              -c-node="${PWD}/bin/c-testnode" \
+              -rust-node="${PWD}/bin/rust-testnode" \
+          2>&1 | tee test-output.ndjson
+        continue-on-error: true
+        env:
+          TESTNET_RESULTS: ${{ env.TESTNET_RESULTS }}
+
+      # Generate the deterministic JSON + Markdown report from go test -json
+      # output and the intermediate results file written by the test harness.
+      # No LLM, AI, or generative model is invoked at any point.
+      - name: Generate compatibility report
+        run: |
+          go run ./cmd/report \
+            -input=test-output.ndjson \
+            -results="${TESTNET_RESULTS}" \
+            -json-out=compatibility-report.json \
+            -md-out=compatibility-report.md
+        env:
+          TESTNET_RESULTS: ${{ env.TESTNET_RESULTS }}
+
+      # Append the Markdown report to the job summary so it is visible in the
+      # GitHub Actions UI without downloading an artifact.
+      - name: Write job summary
+        run: cat compatibility-report.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload compatibility report artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: compatibility-report
+          path: |
+            compatibility-report.json
+            compatibility-report.md
+          if-no-files-found: warn
+
+      - name: Upload raw go test output
+        uses: actions/upload-artifact@v4
+        with:
+          name: go-test-json-output
+          path: test-output.ndjson
+          if-no-files-found: warn
+
+      # Fail the job if any test was classified as "conflicting".
+      # "not_implemented" results are acceptable — they reflect missing features,
+      # not incompatibilities.
+      - name: Enforce no conflicting results
+        run: |
+          CONFLICTS=$(
+            jq '[.results[] | select(.status == "conflicting")] | length' \
+              compatibility-report.json
+          )
+          if [[ "${CONFLICTS}" -gt 0 ]]; then
+            echo "::error::${CONFLICTS} conflicting compatibility result(s) found."
+            echo "See compatibility-report.md for details."
+            exit 1
+          fi
+          echo "No conflicting results. Testnet passed."

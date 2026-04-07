@@ -1,0 +1,24 @@
+# Build artefacts
+bin/
+vendor/
+# Root-level compiled binary (produced by `go build ./cmd/report/`)
+/report
+
+# Cmake build directories
+_build/
+*_build/
+
+# Rust target directory (inside testnode/tox_rs)
+testnode/tox_rs/target/
+
+# Go module cache residue
+go.sum
+
+# Test output
+test-output.ndjson
+testnet-results.json
+compatibility-report.json
+compatibility-report.md
+
+# OS
+.DS_Store
