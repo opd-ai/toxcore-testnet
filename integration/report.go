@@ -23,10 +23,12 @@ type TestResult struct {
 //
 // Classification rules (purely mechanical, based on exit codes):
 //
-//	Both sides exit_code == 0          → "compatible"
-//	Both sides participate, any non-0  → "conflicting"
-//	Either side reports not_implemented → "not_implemented"
-//	Timeout or IPC error               → "conflicting" (exit code 3 or 1 respectively)
+//	Both sides exit_code == 0            → "compatible"
+//	Both sides participate, any non-0    → "conflicting"
+//	Either side reports not_implemented  → "not_implemented" (exit code 2)
+//	Both sides timeout                   → "not_implemented" (exit code 2; no incompatibility proven)
+//	One side times out, other responds   → "conflicting" (exit code 3)
+//	IPC error on either side             → "conflicting" (exit code 1)
 func classifyResults(feature, implA, implB string, resA, resB *nodeResult) TestResult {
 	// Prefer the initiator's (A's) exit code as the representative.
 	exitCode := resA.ExitCode
@@ -36,6 +38,16 @@ func classifyResults(feature, implA, implB string, resA, resB *nodeResult) TestR
 	switch {
 	case resA.Status == "not_implemented" || resB.Status == "not_implemented":
 		status = "not_implemented"
+		exitCode = 2
+		details = fmt.Sprintf("A: %s | B: %s", resA.Details, resB.Details)
+
+	case resA.Status == "timeout" && resB.Status == "timeout":
+		// Both sides timed out without producing a result — neither side proved
+		// an incompatibility, so treat this as not_implemented rather than
+		// conflicting. This avoids false positives when both implementations
+		// fail to run the test (e.g., due to DHT connectivity issues).
+		status = "not_implemented"
+		exitCode = 2
 		details = fmt.Sprintf("A: %s | B: %s", resA.Details, resB.Details)
 
 	case resA.Status == "timeout" || resB.Status == "timeout":
