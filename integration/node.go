@@ -7,21 +7,46 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 )
 
 // portBlock is atomically incremented so every StartNode call gets
-// a non-overlapping 100-port window starting from baseUDPPort.
+// a unique port starting from baseUDPPort.
 var portBlock uint32
 
-// baseUDPPort is the starting UDP port for the first test node. Each subsequent
-// node gets a window of portWindowSize ports starting from baseUDPPort + N*portWindowSize.
-const (
-	baseUDPPort    = 33445
-	portWindowSize = 100
-)
+// baseUDPPort is the starting UDP port for the first test node.
+// Each subsequent node gets baseUDPPort + N, giving every node a single
+// dedicated port so the reported tox_port is always accurate.
+const baseUDPPort = 33445
+
+// buildNodeEnv returns an environment slice based on os.Environ() with any
+// existing entries for the given overrides removed, then the overrides appended.
+// This prevents duplicate env-var entries when the parent process already
+// exports TOX_PORT_START or TOX_PORT_END.
+func buildNodeEnv(overrides ...string) []string {
+	dropKeys := make(map[string]struct{}, len(overrides))
+	for _, kv := range overrides {
+		if i := strings.IndexByte(kv, '='); i > 0 {
+			dropKeys[kv[:i]] = struct{}{}
+		}
+	}
+	base := os.Environ()
+	env := make([]string, 0, len(base)+len(overrides))
+	for _, kv := range base {
+		key := kv
+		if i := strings.IndexByte(kv, '='); i > 0 {
+			key = kv[:i]
+		}
+		if _, skip := dropKeys[key]; skip {
+			continue
+		}
+		env = append(env, kv)
+	}
+	return append(env, overrides...)
+}
 
 // nodeReady is the first line a test node writes to stdout once it is
 // initialised and ready to accept commands.
@@ -122,15 +147,16 @@ func (n *TestNode) initializeNodeIO(stdout io.Reader) {
 // returns a TestNode ready to accept commands. implName is the human-readable
 // label used in reports (e.g. "go-toxcore").
 func StartNode(binaryPath, implName string) (*TestNode, error) {
-	block := atomic.AddUint32(&portBlock, 1)
-	startPort := baseUDPPort + int(block-1)*portWindowSize
-	endPort := startPort + portWindowSize - 1
+	// Assign each node a single unique port so the ready-message tox_port is
+	// always accurate: if tox_new succeeds with EndPort == StartPort, it must
+	// have bound exactly that port.
+	port := baseUDPPort + int(atomic.AddUint32(&portBlock, 1)-1)
 
 	cmd := exec.Command(binaryPath)
 	cmd.Stderr = os.Stderr
-	cmd.Env = append(os.Environ(),
-		fmt.Sprintf("TOX_PORT_START=%d", startPort),
-		fmt.Sprintf("TOX_PORT_END=%d", endPort),
+	cmd.Env = buildNodeEnv(
+		fmt.Sprintf("TOX_PORT_START=%d", port),
+		fmt.Sprintf("TOX_PORT_END=%d", port),
 	)
 
 	stdin, err := cmd.StdinPipe()

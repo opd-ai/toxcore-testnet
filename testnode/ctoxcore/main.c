@@ -836,10 +836,16 @@ static int parse_port_env(const char *env_val, int default_val)
 int main(void)
 {
     /* Read port range from environment (set by the integration test harness).
-     * Each node gets a unique, non-overlapping 100-port window so parallel
-     * test instances don't contend for the same ports. */
+     * Each node gets a unique, non-overlapping port so parallel
+     * test instances don't contend for the same ports. Fall back to the
+     * default range if the supplied bounds do not form a valid range. */
     int start_port = parse_port_env(getenv("TOX_PORT_START"), 33445);
     int end_port   = parse_port_env(getenv("TOX_PORT_END"),   33545);
+
+    if (end_port < start_port) {
+        start_port = 33445;
+        end_port   = 33545;
+    }
 
     /* Initialise Tox. */
     struct Tox_Options *opts = tox_options_new(NULL);

@@ -365,10 +365,26 @@ func main() {
 	log.SetFlags(0)
 
 	// Read port range from environment (set by the integration test harness).
-	// Each node gets a unique, non-overlapping 100-port window so parallel
-	// test instances don't contend for the same ports.
+	// Each node gets a unique, non-overlapping port so parallel test instances
+	// don't contend for the same ports.
 	startPort := getEnvInt("TOX_PORT_START", defaultUDPPortStart)
 	endPort := getEnvInt("TOX_PORT_END", defaultUDPPortEnd)
+
+	// Validate parsed values. Fall back to defaults for out-of-range or
+	// inverted ranges so the node always starts with sane options.
+	if startPort < 1 || startPort > 65535 {
+		log.Printf("go-testnode: invalid TOX_PORT_START=%d, using default %d", startPort, defaultUDPPortStart)
+		startPort = defaultUDPPortStart
+	}
+	if endPort < 1 || endPort > 65535 {
+		log.Printf("go-testnode: invalid TOX_PORT_END=%d, using default %d", endPort, defaultUDPPortEnd)
+		endPort = defaultUDPPortEnd
+	}
+	if endPort < startPort {
+		log.Printf("go-testnode: TOX_PORT_END=%d < TOX_PORT_START=%d, using defaults", endPort, startPort)
+		startPort = defaultUDPPortStart
+		endPort = defaultUDPPortEnd
+	}
 
 	// Initialise Tox.
 	opts := toxcore.NewOptions()
