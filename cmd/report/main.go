@@ -270,7 +270,7 @@ func writeJSON(results []TestResult, generatedAt string) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(*flagJSONOut, data, 0644)
+	return os.WriteFile(*flagJSONOut, data, 0o644)
 }
 
 // ---------------------------------------------------------------------------
@@ -345,5 +345,5 @@ func writeMarkdown(results []TestResult, generatedAt string) error {
 	sb.WriteString("\n> Report generated deterministically by test harness logic. ")
 	sb.WriteString("No LLM, AI model, or generative tool was used.\n")
 
-	return os.WriteFile(*flagMDOut, []byte(sb.String()), 0644)
+	return os.WriteFile(*flagMDOut, []byte(sb.String()), 0o644)
 }

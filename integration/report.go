@@ -89,7 +89,7 @@ func writeResults(t *testing.T, results []TestResult) {
 	if err != nil {
 		t.Fatalf("could not marshal results: %v", err)
 	}
-	if err := os.WriteFile(path, data, 0644); err != nil {
+	if err := os.WriteFile(path, data, 0o644); err != nil {
 		t.Fatalf("could not write results to %s: %v", path, err)
 	}
 	t.Logf("intermediate results written to %s", path)

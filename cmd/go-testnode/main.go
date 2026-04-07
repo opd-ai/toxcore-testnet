@@ -131,7 +131,7 @@ type node struct {
 
 // testDHTBootstrap verifies that the DHT layer is connected after bootstrapping.
 // Both sides report compatible if they have at least one DHT peer.
-func (n *node) testDHTBootstrap(_ string, _ string) (string, int, string) {
+func (n *node) testDHTBootstrap(_, _ string) (string, int, string) {
 	// Give the DHT loop time to find the peer we bootstrapped against.
 	deadline := time.Now().Add(30 * time.Second)
 	for time.Now().Before(deadline) {

@@ -14,11 +14,11 @@ import (
 // nodeReady is the first line a test node writes to stdout once it is
 // initialised and ready to accept commands.
 type nodeReady struct {
-	Type        string `json:"type"`         // "ready"
-	Impl        string `json:"impl"`         // human-readable name, e.g. "c-toxcore"
-	ToxID       string `json:"tox_id"`       // 76-char hex Tox address
-	DHTKey      string `json:"dht_key"`      // 64-char hex DHT public key
-	ToxPort     int    `json:"tox_port"`     // UDP port the Tox instance is listening on
+	Type    string `json:"type"`     // "ready"
+	Impl    string `json:"impl"`     // human-readable name, e.g. "c-toxcore"
+	ToxID   string `json:"tox_id"`   // 76-char hex Tox address
+	DHTKey  string `json:"dht_key"`  // 64-char hex DHT public key
+	ToxPort int    `json:"tox_port"` // UDP port the Tox instance is listening on
 }
 
 // nodeResult is emitted after a test finishes.
@@ -32,7 +32,7 @@ type nodeResult struct {
 
 // nodeError is emitted when a node encounters an unrecoverable error.
 type nodeError struct {
-	Type    string `json:"type"`    // "error"
+	Type    string `json:"type"` // "error"
 	Message string `json:"message"`
 }
 
@@ -46,10 +46,10 @@ type cmdBootstrap struct {
 
 // cmdRunTest instructs a node to execute one test case.
 type cmdRunTest struct {
-	Cmd        string `json:"cmd"`          // "run_test"
-	Feature    string `json:"feature"`      // e.g. "friend_request"
-	Role       string `json:"role"`         // "initiator" | "responder"
-	PeerToxID  string `json:"peer_tox_id"`  // Tox address of the other side (initiator only)
+	Cmd       string `json:"cmd"`         // "run_test"
+	Feature   string `json:"feature"`     // e.g. "friend_request"
+	Role      string `json:"role"`        // "initiator" | "responder"
+	PeerToxID string `json:"peer_tox_id"` // Tox address of the other side (initiator only)
 }
 
 // cmdShutdown asks the node to exit cleanly.
@@ -59,13 +59,13 @@ type cmdShutdown struct {
 
 // TestNode manages a single test-node subprocess.
 type TestNode struct {
-	impl   string
-	cmd    *exec.Cmd
-	stdin  io.WriteCloser
-	mu     sync.Mutex
-	lines  chan string
-	done   chan struct{}
-	Ready  nodeReady
+	impl  string
+	cmd   *exec.Cmd
+	stdin io.WriteCloser
+	mu    sync.Mutex
+	lines chan string
+	done  chan struct{}
+	Ready nodeReady
 }
 
 // StartNode launches the binary at binaryPath, reads its "ready" message, and
