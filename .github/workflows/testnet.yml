@@ -200,6 +200,7 @@ jobs:
         id: run_tests
         run: |
           set -o pipefail
+          export LD_LIBRARY_PATH="${PWD}/bin/lib:${LD_LIBRARY_PATH:-}"
           go test -v -json -timeout 25m ./integration/... \
             -args \
               -go-node="${PWD}/bin/go-testnode" \
