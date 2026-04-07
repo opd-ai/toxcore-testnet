@@ -89,6 +89,23 @@ func (n *TestNode) readReadyMessage() error {
 	}
 }
 
+// initializeNodeIO starts the stdout reader goroutine for the test node.
+// It reads all stdout lines into a buffered channel until the done channel
+// is closed or the scanner encounters an error.
+func (n *TestNode) initializeNodeIO(stdout io.Reader) {
+	go func() {
+		scanner := bufio.NewScanner(stdout)
+		for scanner.Scan() {
+			select {
+			case n.lines <- scanner.Text():
+			case <-n.done:
+				return
+			}
+		}
+		close(n.lines)
+	}()
+}
+
 // StartNode launches the binary at binaryPath, reads its "ready" message, and
 // returns a TestNode ready to accept commands. implName is the human-readable
 // label used in reports (e.g. "go-toxcore").
@@ -118,20 +135,8 @@ func StartNode(binaryPath, implName string) (*TestNode, error) {
 		done:  make(chan struct{}),
 	}
 
-	// Read all stdout lines into a buffered channel.
-	go func() {
-		scanner := bufio.NewScanner(stdout)
-		for scanner.Scan() {
-			select {
-			case n.lines <- scanner.Text():
-			case <-n.done:
-				return
-			}
-		}
-		close(n.lines)
-	}()
+	n.initializeNodeIO(stdout)
 
-	// Wait for the "ready" message.
 	if err := n.readReadyMessage(); err != nil {
 		return nil, err
 	}

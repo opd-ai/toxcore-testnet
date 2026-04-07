@@ -106,9 +106,9 @@ Test nodes communicate with the harness via a JSON-line protocol:
 | `dht_bootstrap` | DHT connectivity after bootstrapping | ✅ Implemented |
 | `friend_request` | Send and accept friend requests | ✅ Implemented |
 | `friend_message` | Exchange text messages between friends | ✅ Implemented |
-| `file_transfer` | Transfer binary blobs | 🚧 Planned |
-| `conference_invite` | Group conference invitations | 🚧 Planned |
-| `conference_message` | Group conference messaging | 🚧 Planned |
+| `file_transfer` | Transfer binary blobs | ✅ C node, 🚧 Go node |
+| `conference_invite` | Group conference invitations | ✅ C node, 🚧 Go node |
+| `conference_message` | Group conference messaging | ✅ C node, 🚧 Go node |
 
 ### Compatibility Status Values
 
