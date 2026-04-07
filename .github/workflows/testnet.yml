@@ -87,10 +87,10 @@ jobs:
             cmake ninja-build libsodium-dev pkg-config
 
       # Cache the compiled c-toxcore library.
-      # The key always includes github.run_id so the exact key never matches,
-      # forcing the build script to fetch the latest upstream HEAD every time.
-      # restore-keys lets us reuse a previous checkout/build to speed things up
-      # when the upstream HEAD has not changed.
+      # The build script (scripts/build-ctoxcore.sh) always runs git fetch +
+      # reset --hard against upstream, so even on a cache hit the checkout is
+      # updated to the latest HEAD and the build is only re-run when the
+      # upstream commit actually changes.
       - name: Cache c-toxcore build
         uses: actions/cache@v4
         id: cache-ctoxcore
@@ -98,9 +98,7 @@ jobs:
           path: |
             vendor/c-toxcore
             vendor/c-toxcore-install
-          key: c-toxcore-${{ runner.os }}-${{ hashFiles('scripts/build-ctoxcore.sh') }}-${{ github.run_id }}-v1
-          restore-keys: |
-            c-toxcore-${{ runner.os }}-${{ hashFiles('scripts/build-ctoxcore.sh') }}-
+          key: c-toxcore-${{ runner.os }}-${{ hashFiles('scripts/build-ctoxcore.sh') }}-v1
 
       - name: Build c-toxcore + C test node
         run: bash scripts/build-ctoxcore.sh
@@ -272,7 +270,7 @@ jobs:
     name: Publish Results to GitHub Pages
     runs-on: ubuntu-22.04
     needs: [integration-tests]
-    if: always() && needs.integration-tests.result != 'cancelled'
+    if: always()
     permissions:
       pages: write
       id-token: write
