@@ -116,50 +116,33 @@ func reportTimestamp() string {
 // Result loading
 // ---------------------------------------------------------------------------
 
-// loadResults collects TestResult records from all available sources.
-// Sources are tried in this order:
-//  1. The intermediate results file produced by the integration tests.
-//  2. go test -json output (parses log lines that match a known prefix).
-//
-// Records from the results file take precedence; go test output is only used
-// to fill gaps (e.g. if the process exited before flushing the file).
-func loadResults() ([]TestResult, error) {
-	seen := map[string]bool{} // de-dup by "feature|implA|implB"
-	var results []TestResult
+// resultAdder is a helper to deduplicate TestResult records.
+type resultAdder struct {
+	seen    map[string]bool
+	results []TestResult
+}
 
-	add := func(r TestResult) {
-		key := fmt.Sprintf("%s|%s|%s", r.Feature, r.ImplA, r.ImplB)
-		if seen[key] {
-			return
-		}
-		seen[key] = true
-		results = append(results, r)
+func newResultAdder() *resultAdder {
+	return &resultAdder{seen: map[string]bool{}}
+}
+
+func (ra *resultAdder) add(r TestResult) {
+	key := fmt.Sprintf("%s|%s|%s", r.Feature, r.ImplA, r.ImplB)
+	if ra.seen[key] {
+		return
 	}
+	ra.seen[key] = true
+	ra.results = append(ra.results, r)
+}
 
-	// Source 1: intermediate results JSON.
-	if *flagResults != "" {
-		rs, err := loadResultsJSON(*flagResults)
-		if err != nil {
-			log.Printf("warning: could not read results file: %v", err)
-		} else {
-			for _, res := range rs {
-				add(res)
-			}
-		}
+func (ra *resultAdder) addAll(rs []TestResult) {
+	for _, r := range rs {
+		ra.add(r)
 	}
+}
 
-	// Source 2: go test -json NDJSON.
-	if *flagInput != "" {
-		rs, err := parseGoTestJSON(*flagInput)
-		if err != nil {
-			log.Printf("warning: could not parse go test output: %v", err)
-		} else {
-			for _, res := range rs {
-				add(res)
-			}
-		}
-	}
-
+// sortResults sorts TestResult slice by Feature, then ImplA, then ImplB.
+func sortResults(results []TestResult) {
 	sort.Slice(results, func(i, j int) bool {
 		ri, rj := results[i], results[j]
 		if ri.Feature != rj.Feature {
@@ -170,8 +153,40 @@ func loadResults() ([]TestResult, error) {
 		}
 		return ri.ImplB < rj.ImplB
 	})
+}
 
-	return results, nil
+// loadResults collects TestResult records from all available sources.
+// Sources are tried in this order:
+//  1. The intermediate results file produced by the integration tests.
+//  2. go test -json output (parses log lines that match a known prefix).
+//
+// Records from the results file take precedence; go test output is only used
+// to fill gaps (e.g. if the process exited before flushing the file).
+func loadResults() ([]TestResult, error) {
+	ra := newResultAdder()
+
+	// Source 1: intermediate results JSON.
+	if *flagResults != "" {
+		rs, err := loadResultsJSON(*flagResults)
+		if err != nil {
+			log.Printf("warning: could not read results file: %v", err)
+		} else {
+			ra.addAll(rs)
+		}
+	}
+
+	// Source 2: go test -json NDJSON.
+	if *flagInput != "" {
+		rs, err := parseGoTestJSON(*flagInput)
+		if err != nil {
+			log.Printf("warning: could not parse go test output: %v", err)
+		} else {
+			ra.addAll(rs)
+		}
+	}
+
+	sortResults(ra.results)
+	return ra.results, nil
 }
 
 func loadResultsJSON(path string) ([]TestResult, error) {

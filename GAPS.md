@@ -4,184 +4,174 @@ This document identifies gaps between the toxcore-testnet project's stated goals
 
 ---
 
-## Go Test Node Cannot Build Against opd-ai/toxcore
+## 1. go-toxcore ↔ c-toxcore DHT Connectivity Fails
 
-- **Stated Goal**: Support go-toxcore (opd-ai/toxcore) as one of three Tox implementations in the cross-implementation testnet.
+- **Stated Goal**: Test DHT bootstrap, friend request, and friend message features across all three implementation pairs, with the go↔c pair being the primary use case.
 
-- **Current State**: The go-testnode (`cmd/go-testnode/main.go`) cannot compile. It references undefined methods on `*toxcore.Tox`:
-  - `n.tox.IsConnected` (line 138)
-  - `n.tox.FriendAdd` (lines 156, 199)
-  - `n.tox.FriendIsConnected` (lines 163, 203, 209)
-  - `n.tox.SetFriendMessageCallback` (line 230)
-  - `n.tox.FriendSendMessage` returns 2 values, not 1 (line 212)
-  - `MessageTypeNormal` cannot be used as string argument (line 212)
+- **Current State**: All recent CI runs (22+ consecutive failures) show the go-toxcore↔c-toxcore pair timing out on friend_request and friend_message tests. The harness sends bootstrap commands with the port from go-testnode's ready message (hardcoded to 33445 at `cmd/go-testnode/main.go:47`), but if opd-ai/toxcore binds to a different port, c-testnode's bootstrap request goes to the wrong address.
 
-- **Impact**: 2 of 3 implementation pairs (go↔c, go↔rust) are completely untestable. The Go implementation is the primary use case for this testnet, yet it cannot participate in any compatibility tests.
+- **Impact**: The testnet's core purpose—verifying cross-implementation compatibility—is not achieved for the most important pair. CI status cannot be trusted as a health indicator.
 
 - **Closing the Gap**:
-  1. Clone opd-ai/toxcore locally and audit its exported API: `go doc github.com/opd-ai/toxcore`
-  2. The actual opd-ai/toxcore API likely uses different method names. Research indicates:
-     - Connection status may be via `Tox.SelfGetConnectionStatus()` or similar
-     - Friend operations may be `AddFriend`, `AddFriendNorequest`, `FriendGetConnectionStatus`
-     - Callbacks may use `OnFriendRequest`, `OnFriendMessage` patterns
-  3. Update `cmd/go-testnode/main.go` to match the real API signatures
-  4. Ensure `FriendSendMessage` return value is properly captured (returns `(uint32, error)`)
-  5. Use the correct type for message type parameter
-  6. Validate: `cd cmd/go-testnode && go mod edit -replace github.com/opd-ai/toxcore=<local-path> && go build -o /dev/null .`
+  1. Investigate whether opd-ai/toxcore provides `SelfGetUDPPort()` or equivalent API
+  2. If available, replace `n.udpPort = defaultUDPPort` with `n.udpPort = t.SelfGetUDPPort()` in `cmd/go-testnode/main.go:374`
+  3. If not available, use ToxOptions to force binding to the configured port and fail fast if binding fails
+  4. Add stderr logging in go-testnode showing actual bound port for debugging
+  5. Verify fix by running `netstat -ulnp | grep go-testnode` immediately after startup
 
 ---
 
-## Rust Test Node Cannot Build Against tox-rs/tox
+## 2. Rust Test Node Is Entirely Stubbed
 
-- **Stated Goal**: Support tox-rs/tox as one of three Tox implementations in the cross-implementation testnet.
+- **Stated Goal**: Support tox-rs/tox as one of three Tox implementations in the cross-implementation testnet (README.md lines 3-4, 45-57).
 
-- **Current State**: The rust-testnode (`testnode/tox_rs/src/main.rs`) fails to compile with 10 errors. The code imports `tox::toxcore::*` modules that no longer exist:
-  - `tox::toxcore::crypto_core::SecretKey` — not found
-  - `tox::toxcore::dht::packet::DhtPacket` — not found
-  - `tox::toxcore::dht::server::Server` — not found
-  - `tox::toxcore::friend_connection::FriendConnections` — not found
-  - `tox::toxcore::net_crypto::NetCrypto` — not found
-  - `tox::toxcore::onion::client::OnionClient` — not found
-  - `tox::toxcore::tcp::client::Connections` — not found
-  - `tox::toxcore::tox::Tox` — not found
+- **Current State**: The rust-testnode (`testnode/tox_rs/src/main.rs`) is explicitly non-functional. Lines 7-11 document: "The tox-rs/tox library has restructured and no longer provides a high-level Tox struct API." The tox dependency is commented out in `Cargo.toml:12-16`. All tests emit `not_implemented` with exit code 2.
 
-- **Impact**: 2 of 3 implementation pairs (rust↔c, rust↔go) are completely untestable. The Rust implementation cannot participate in any compatibility tests.
+- **Impact**: 
+  - 2 of 3 implementation pairs (rust↔c, rust↔go) produce no compatibility data
+  - 12 of 18 test matrix entries are automatically `not_implemented`
+  - README claims "tox-rs implementation" support which is misleading
 
 - **Closing the Gap**:
-  1. Research current tox-rs/tox API at https://docs.rs/tox and https://github.com/tox-rs/tox
-  2. The library has been restructured into separate crates:
-     - `tox_core` — main protocol logic
-     - `tox_crypto` — cryptographic primitives
-     - `tox_packet` — packet encoding/decoding
-  3. Determine if tox-rs provides a high-level `Tox` struct or only low-level DHT/crypto primitives
-  4. If high-level API exists: rewrite `Node` struct to use correct imports and method signatures
-  5. If only low-level primitives exist: either build a wrapper that implements the required operations, or mark the Rust node as "unsupported" in CI (make it an optional build)
-  6. Update `testnode/tox_rs/Cargo.toml` dependency specification if needed
-  7. Validate: `cd testnode/tox_rs && cargo build --release`
+  1. Monitor https://github.com/tox-rs/tox for high-level API development
+  2. Alternative: wrap c-toxcore via FFI from Rust using `libc` crate as interim solution
+  3. Update README.md lines 45-57 to add: **Note: The Rust test node is currently non-functional pending upstream API availability.**
+  4. Consider removing rust-testnode from CI (`-rust-node` flag) to reduce report noise until functional
+  5. Track upstream in ROADMAP.md Priority 3 (already documented)
 
 ---
 
-## C Test Node Cannot Build Against TokTok/c-toxcore
+## 3. File Transfer Feature Not Implemented
 
-- **Stated Goal**: Support TokTok/c-toxcore as one of three Tox implementations in the cross-implementation testnet.
+- **Stated Goal**: Test file transfer functionality ("transfer a small binary blob") per README.md line 109.
 
-- **Current State**: The c-toxcore CMake build fails during the configuration step:
-  ```
-  CMake Error at CMakeLists.txt:520 (add_library):
-    Cannot find source file: third_party/cmp/cmp.c
-  ```
-  The c-toxcore repository requires git submodules to be initialized, but `scripts/build-ctoxcore.sh` uses `--depth=1` shallow clone without initializing submodules.
+- **Current State**: All three test nodes explicitly return `not_implemented` for `file_transfer`:
+  - `cmd/go-testnode/main.go:269-271`: "file transfer API not yet confirmed in opd-ai/toxcore"
+  - `testnode/ctoxcore/main.c:342-350`: "file transfer test not yet implemented in c-testnode"
+  - rust-testnode stubs all features
 
-- **Impact**: All 3 implementation pairs are affected because c-toxcore is the reference implementation. The testnet cannot produce any compatibility results.
+- **Impact**: 3 test matrix entries (go↔c, go↔rust, c↔rust) show `not_implemented`. File transfer compatibility cannot be verified despite being listed as a testable feature.
 
 - **Closing the Gap**:
-  1. Update `scripts/build-ctoxcore.sh` to initialize submodules after cloning:
-     ```bash
-     git clone --depth=1 --recurse-submodules \
-         https://github.com/TokTok/c-toxcore.git \
-         "${VENDOR_DIR}"
+  1. Implement in c-testnode first using stable c-toxcore API:
+     - `tox_file_send()` / `tox_file_send_chunk()` for sending
+     - `tox_file_control()` / `tox_file_recv_chunk()` callbacks for receiving
+  2. Test protocol:
+     - Initiator sends 1KB test blob
+     - Responder accepts, receives chunks, sends confirmation message
+     - Initiator verifies confirmation
+  3. Audit opd-ai/toxcore for file transfer API: `go doc github.com/opd-ai/toxcore | grep -i file`
+  4. Implement in go-testnode once c-testnode works
+  5. Update README to mark file_transfer as "🚧 Planned" until implemented
+
+---
+
+## 4. Conference/Group Chat Features Not Implemented
+
+- **Stated Goal**: Test conference invite and conference message functionality per README.md lines 110-111.
+
+- **Current State**: Both `conference_invite` and `conference_message` return `not_implemented` in all three nodes:
+  - `cmd/go-testnode/main.go:277-286`
+  - `testnode/ctoxcore/main.c:352-364`
+  - rust-testnode stubs all features
+
+- **Impact**: 6 test matrix entries (2 features × 3 pairs) provide no actionable data. Group chat compatibility cannot be verified.
+
+- **Closing the Gap**:
+  1. Implement in c-testnode using c-toxcore conference API:
+     - `tox_conference_new()` — create conference
+     - `tox_conference_invite()` — invite peer
+     - `tox_conference_join()` — accept invitation
+     - `tox_conference_send_message()` — send message
+     - Associated callbacks for receiving invites/messages
+  2. Test protocol for conference_invite:
+     - Initiator creates conference, invites responder
+     - Responder accepts via callback
+     - Both verify conference membership
+  3. Test protocol for conference_message:
+     - Both join conference
+     - Initiator sends message
+     - Responder verifies receipt
+  4. Audit opd-ai/toxcore for conference API before implementing go-testnode
+  5. Update README to mark conference features as "🚧 Planned"
+
+---
+
+## 5. README Documents Unimplemented Features as Supported
+
+- **Stated Goal**: README should accurately describe the project's capabilities.
+
+- **Current State**: README.md lines 104-112 list all 6 test features in a table without indicating implementation status. The note on line 58 mentions Rust stubbing, but the feature table implies all features are functional.
+
+- **Impact**: Users cloning the repo expect full functionality but find 50% of features stubbed.
+
+- **Closing the Gap**:
+  1. Add "Status" column to feature table at README.md:104-112:
+     ```markdown
+     | Feature | Description | Status |
+     |---------|-------------|--------|
+     | `dht_bootstrap` | DHT connectivity | ✅ Implemented |
+     | `friend_request` | Send/accept friend requests | ✅ Implemented |
+     | `friend_message` | Exchange text messages | ✅ Implemented |
+     | `file_transfer` | Transfer binary blobs | 🚧 Planned |
+     | `conference_invite` | Group invitations | 🚧 Planned |
+     | `conference_message` | Group messaging | 🚧 Planned |
      ```
-     Or add submodule init after clone:
-     ```bash
-     git -C "${VENDOR_DIR}" submodule update --init --recursive
-     ```
-  2. If submodules cause issues with shallow clone, consider removing `--depth=1` or using `--shallow-submodules`
-  3. Validate: `bash scripts/build-ctoxcore.sh` completes without CMake errors
+  2. Add prominent note about Rust node status near line 45
+  3. Update after each feature is implemented
 
 ---
 
-## File Transfer Test Not Implemented
+## 6. CI Workflow Go Version Mismatch
 
-- **Stated Goal**: Test file transfer functionality — transfer small binary blobs between implementations.
+- **Stated Goal**: CI should build and test against the Go version specified in go.mod.
 
-- **Current State**: All three test nodes explicitly return `not_implemented` for the `file_transfer` feature:
-  - `cmd/go-testnode/main.go:251-252` — "file transfer API not yet confirmed in opd-ai/toxcore"
-  - `testnode/ctoxcore/main.c:343-349` — "file transfer test not yet implemented in c-testnode"
-  - `testnode/tox_rs/src/main.rs:328` — calls `not_impl()`
+- **Current State**: `.github/workflows/testnet.yml:20` sets `GO_VERSION: '1.22'` but both `go.mod:3` and `cmd/go-testnode/go.mod:3` require `go 1.25.0`.
 
-- **Impact**: File transfer compatibility cannot be verified. The test matrix shows 3 `not_implemented` results for file_transfer, providing no actionable compatibility data.
+- **Impact**: CI may succeed with Go 1.22 features but fail when users build with Go 1.25, or vice versa. The mismatch can mask compatibility issues.
 
 - **Closing the Gap**:
-  1. Audit c-toxcore file transfer API: `tox_file_send`, `tox_file_send_chunk`, `tox_file_control`, and associated callbacks
-  2. Implement `test_file_transfer` in c-testnode with a small binary blob roundtrip test
-  3. Confirm file transfer API exists in opd-ai/toxcore; if present, implement in go-testnode
-  4. Confirm file transfer API exists in tox-rs/tox; if present, implement in rust-testnode
-  5. Validate: Run full test matrix; `file_transfer` shows "compatible" for at least c↔c pairs
+  1. Update `.github/workflows/testnet.yml:20` to `GO_VERSION: '1.25'`
+  2. Verify CI passes with the updated version
+  3. Consider using `go mod download` to validate module compatibility
 
 ---
 
-## Conference/Group Chat Tests Not Implemented
+## 7. C Test Node RPATH Uses Absolute Path
 
-- **Stated Goal**: Test conference invite and conference message functionality.
+- **Stated Goal**: c-testnode binary should be portable across CI job runners.
 
-- **Current State**: All three test nodes explicitly return `not_implemented` for both conference features:
-  - `conference_invite` — stubbed in all three nodes
-  - `conference_message` — stubbed in all three nodes
+- **Current State**: `testnode/ctoxcore/CMakeLists.txt:24-26` sets RPATH to `${TOXCORE_LIBRARY_DIRS}`, which resolves to an absolute path like `/home/user/.../vendor/c-toxcore-install/lib`. When the binary is uploaded as an artifact and downloaded in a different runner, this path doesn't exist.
 
-- **Impact**: Group chat compatibility cannot be verified. 6 test matrix entries (2 features × 3 pairs) provide no actionable data.
+- **Impact**: c-testnode crashes on startup in the integration-tests job because libtoxcore.so is not found. PR #3 notes this was previously fixed by changing RPATH to `$ORIGIN/lib` and bundling shared libraries.
 
 - **Closing the Gap**:
-  1. Audit c-toxcore conference API: `tox_conference_new`, `tox_conference_invite`, `tox_conference_join`, `tox_conference_send_message`, and callbacks
-  2. Implement `test_conference_invite` and `test_conference_message` in c-testnode
-  3. Audit opd-ai/toxcore for conference API support; implement if available
-  4. Audit tox-rs/tox for conference API support; implement if available
-  5. For implementations lacking conference support, ensure they correctly return `not_implemented`
-  6. Validate: Conference tests show "compatible" or accurate "not_implemented" per implementation
+  1. Verify `CMakeLists.txt:24-26` uses `$ORIGIN/lib` not absolute path
+  2. Ensure `scripts/build-ctoxcore.sh` bundles `libtoxcore.so*` into `bin/lib/`
+  3. Ensure CI workflow uploads `bin/lib/` alongside `bin/c-testnode`
+  4. Test locally: `ldd bin/c-testnode` should show `libtoxcore.so => ./lib/libtoxcore.so`
 
 ---
 
-## README Lacks Documentation
+## 8. Protocol Type Duplication Across Implementations
 
-- **Stated Goal**: Provide a testnet that developers can use to verify cross-implementation interoperability.
+- **Stated Goal**: IPC protocol should be consistently implemented across all nodes (noted in ROADMAP.md Priority 4).
 
-- **Current State**: `README.md` contains only a single line: "a compatibility testnet for c-toxcore and go-toxcore". No build instructions, prerequisites, usage examples, or architecture documentation exists.
+- **Current State**: IPC types are defined independently in:
+  - `integration/node.go:15-58` (Go harness types)
+  - `cmd/go-testnode/main.go:52-89` (Go node types)
+  - `testnode/ctoxcore/main.c` (inline structs)
+  - `testnode/tox_rs/src/main.rs:31-73` (Rust types)
 
-- **Impact**: New contributors cannot build or run the testnet locally. The project is effectively unusable without reading source code or CI workflow files.
+- **Impact**: Protocol changes require updates in 4 places. Drift between definitions can cause silent failures.
 
 - **Closing the Gap**:
-  1. Add "Prerequisites" section listing: Go 1.22+, Rust stable, CMake, Ninja, libsodium-dev, pkg-config
-  2. Add "Building" section with commands for each test node:
-     ```bash
-     # C node
-     bash scripts/build-ctoxcore.sh
-     
-     # Rust node
-     bash scripts/build-tox-rs.sh
-     
-     # Go node
-     cd cmd/go-testnode
-     go mod edit -replace github.com/opd-ai/toxcore=../../vendor/opd-ai-toxcore
-     go build -o ../../bin/go-testnode .
-     ```
-  3. Add "Running Tests" section:
-     ```bash
-     go test -v ./integration/... -args \
-       -go-node="${PWD}/bin/go-testnode" \
-       -c-node="${PWD}/bin/c-testnode" \
-       -rust-node="${PWD}/bin/rust-testnode"
-     ```
-  4. Add "Generating Reports" section explaining `cmd/report` usage
-  5. Add "Architecture" section describing JSON-line IPC protocol
-  6. Validate: README contains ≥500 words and all major sections
+  1. Extract IPC types into a shared `protocol/` package (Go)
+  2. Generate C header from Go definitions using `cgo -exportheader` or manual generation
+  3. Generate Rust types using JSON schema or manual port
+  4. Add protocol version field to ready message for compatibility checking
+  5. This is documented as ROADMAP.md Priority 4 (low priority)
 
 ---
 
-## CI Pipeline Has Zero Passing Builds
-
-- **Stated Goal**: Run nightly CI to detect upstream implementation drift and produce compatibility reports.
-
-- **Current State**: GitHub Actions workflow "Toxcore Cross-Implementation Testnet" has failed on all recent runs (runs #3 and #4 on main branch both have conclusion "failure"). All three build jobs fail before reaching the integration-tests job.
-
-- **Impact**: The nightly drift detection is non-functional. Upstream API changes are not being caught, and no compatibility reports are being generated.
-
-- **Closing the Gap**:
-  1. Fix all three CRITICAL build issues documented in AUDIT.md
-  2. Push fixes to main branch to trigger a new CI run
-  3. Monitor workflow for success
-  4. If any build fails, examine logs and iterate
-  5. Once all builds pass, verify the integration-tests job runs and produces compatibility-report.json/md artifacts
-  6. Validate: Workflow conclusion is "success" and compatibility report artifact is downloadable
-
----
-
-*Generated by gaps analysis on 2026-04-07.*
+*Generated by functional audit on 2026-04-07.*

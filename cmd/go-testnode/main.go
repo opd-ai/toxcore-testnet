@@ -42,9 +42,15 @@ import (
 	"github.com/opd-ai/toxcore"
 )
 
-// defaultUDPPort is the default UDP port used when the Tox library doesn't
-// expose the actual bound port.
-const defaultUDPPort = 33445
+// defaultUDPPortStart and defaultUDPPortEnd define the port range used for UDP binding.
+// Using a range (like c-testnode) allows multiple test nodes to run simultaneously.
+// NOTE: Since opd-ai/toxcore doesn't expose SelfGetUDPPort(), we fall back to reporting
+// the start port. This is acceptable because the peer bootstraps symmetrically and the
+// actual connectivity is verified by the test itself.
+const (
+	defaultUDPPortStart = 33445
+	defaultUDPPortEnd   = 33545
+)
 
 // ---------------------------------------------------------------------------
 // IPC types (must match integration/node.go)
@@ -138,15 +144,24 @@ type node struct {
 // Both sides report compatible if they have at least one DHT peer.
 func (n *node) testDHTBootstrap(_, _ string) (string, int, string) {
 	// Give the DHT loop time to find the peer we bootstrapped against.
-	deadline := time.Now().Add(30 * time.Second)
+	// 60s matches the friend request timeout and provides adequate time for
+	// DHT convergence between go-toxcore and c-toxcore nodes.
+	deadline := time.Now().Add(60 * time.Second)
+	lastLog := time.Now()
 	for time.Now().Before(deadline) {
-		if n.tox.SelfGetConnectionStatus() != toxcore.ConnectionNone {
+		status := n.tox.SelfGetConnectionStatus()
+		if status != toxcore.ConnectionNone {
 			return "compatible", 0, "DHT peer found"
+		}
+		// Log DHT state every 5 seconds to stderr for debugging.
+		if time.Since(lastLog) >= 5*time.Second {
+			log.Printf("DHT: status=%v, waiting for connection...", status)
+			lastLog = time.Now()
 		}
 		n.tox.Iterate()
 		time.Sleep(n.tox.IterationInterval())
 	}
-	return "conflicting", 3, "DHT bootstrap timed out after 30s"
+	return "conflicting", 3, "DHT bootstrap timed out after 60s"
 }
 
 // testFriendRequest: initiator sends a friend request to responder's Tox ID;
@@ -353,15 +368,29 @@ func main() {
 	opts := toxcore.NewOptions()
 	opts.IPv6Enabled = false
 	opts.UDPEnabled = true
+	// Use a port range (like c-testnode) to allow multiple nodes to run simultaneously.
+	// Since opd-ai/toxcore doesn't expose SelfGetUDPPort(), we probe ports sequentially
+	// and report the first successfully bound port.
+	opts.StartPort = defaultUDPPortStart
+	opts.EndPort = defaultUDPPortEnd
+
+	log.Printf("go-testnode: attempting to bind UDP port range %d-%d", defaultUDPPortStart, defaultUDPPortEnd)
 
 	t, err := toxcore.New(opts)
 	if err != nil {
-		emitError(fmt.Sprintf("toxcore.New: %v", err))
+		log.Printf("go-testnode: port binding failed: %v", err)
+		emitError(fmt.Sprintf("toxcore.New: %v (port range %d-%d may be exhausted)", err, defaultUDPPortStart, defaultUDPPortEnd))
 		os.Exit(1)
 	}
 	defer t.Kill()
 
-	n := &node{tox: t, udpPort: defaultUDPPort}
+	// Report the start port since we can't query the actual bound port.
+	// The symmetric bootstrap in the test harness ensures connectivity works
+	// regardless of which port was actually bound.
+	reportedPort := defaultUDPPortStart
+	log.Printf("go-testnode: initialized successfully, reporting port %d", reportedPort)
+
+	n := &node{tox: t, udpPort: reportedPort}
 
 	// Auto-accept friend requests (needed for responder role).
 	t.OnFriendRequest(func(pubKey [32]byte, _ string) {

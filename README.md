@@ -101,14 +101,14 @@ Test nodes communicate with the harness via a JSON-line protocol:
 
 ### Test Features
 
-| Feature | Description |
-|---------|-------------|
-| `dht_bootstrap` | DHT connectivity after bootstrapping |
-| `friend_request` | Send and accept friend requests |
-| `friend_message` | Exchange text messages between friends |
-| `file_transfer` | Transfer binary blobs (not yet implemented) |
-| `conference_invite` | Group conference invitations (not yet implemented) |
-| `conference_message` | Group conference messaging (not yet implemented) |
+| Feature | Description | Status |
+|---------|-------------|--------|
+| `dht_bootstrap` | DHT connectivity after bootstrapping | ✅ Implemented |
+| `friend_request` | Send and accept friend requests | ✅ Implemented |
+| `friend_message` | Exchange text messages between friends | ✅ Implemented |
+| `file_transfer` | Transfer binary blobs | 🚧 Planned |
+| `conference_invite` | Group conference invitations | 🚧 Planned |
+| `conference_message` | Group conference messaging | 🚧 Planned |
 
 ### Compatibility Status Values
 

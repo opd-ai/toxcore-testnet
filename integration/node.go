@@ -159,6 +159,67 @@ func (n *TestNode) Bootstrap(host string, port int, dhtKey string) error {
 	return n.sendCmd(cmdBootstrap{Cmd: "bootstrap", Host: host, Port: port, Key: dhtKey})
 }
 
+// parseResultLine parses a JSON line and returns the nodeResult if it's a result or error type.
+// Returns nil, nil if the line is not a result/error message (should be skipped).
+func (n *TestNode) parseResultLine(line, feature string) (*nodeResult, error) {
+	var envelope struct {
+		Type string `json:"type"`
+	}
+	if err := json.Unmarshal([]byte(line), &envelope); err != nil {
+		return nil, nil // Skip malformed lines
+	}
+
+	switch envelope.Type {
+	case "result":
+		var result nodeResult
+		if err := json.Unmarshal([]byte(line), &result); err != nil {
+			return nil, fmt.Errorf("%s: bad result message: %w", n.impl, err)
+		}
+		return &result, nil
+	case "error":
+		var errMsg nodeError
+		_ = json.Unmarshal([]byte(line), &errMsg)
+		return &nodeResult{
+			Type:     "result",
+			Feature:  feature,
+			Status:   "error",
+			ExitCode: 1,
+			Details:  errMsg.Message,
+		}, nil
+	default:
+		return nil, nil // Skip other message types
+	}
+}
+
+// waitForResult reads from the lines channel until a result is received or timeout occurs.
+func (n *TestNode) waitForResult(feature string, timeout time.Duration) (*nodeResult, error) {
+	deadline := time.After(timeout)
+	for {
+		select {
+		case line, ok := <-n.lines:
+			if !ok {
+				return nil, fmt.Errorf("%s: stdout closed while waiting for result", n.impl)
+			}
+			result, err := n.parseResultLine(line, feature)
+			if err != nil {
+				return nil, err
+			}
+			if result != nil {
+				return result, nil
+			}
+			// Continue waiting if line was not a result/error
+		case <-deadline:
+			return &nodeResult{
+				Type:     "result",
+				Feature:  feature,
+				Status:   "timeout",
+				ExitCode: 3,
+				Details:  fmt.Sprintf("%s did not respond within %s", n.impl, timeout),
+			}, nil
+		}
+	}
+}
+
 // RunTest sends a run_test command and waits for the result (up to timeout).
 // role must be "initiator" or "responder".
 func (n *TestNode) RunTest(feature, role, peerToxID string, timeout time.Duration) (*nodeResult, error) {
@@ -171,47 +232,7 @@ func (n *TestNode) RunTest(feature, role, peerToxID string, timeout time.Duratio
 		return nil, fmt.Errorf("%s: send run_test command: %w", n.impl, err)
 	}
 
-	deadline := time.After(timeout)
-	for {
-		select {
-		case line, ok := <-n.lines:
-			if !ok {
-				return nil, fmt.Errorf("%s: stdout closed while waiting for result", n.impl)
-			}
-			var envelope struct {
-				Type string `json:"type"`
-			}
-			if err := json.Unmarshal([]byte(line), &envelope); err != nil {
-				continue
-			}
-			switch envelope.Type {
-			case "result":
-				var result nodeResult
-				if err := json.Unmarshal([]byte(line), &result); err != nil {
-					return nil, fmt.Errorf("%s: bad result message: %w", n.impl, err)
-				}
-				return &result, nil
-			case "error":
-				var errMsg nodeError
-				_ = json.Unmarshal([]byte(line), &errMsg)
-				return &nodeResult{
-					Type:     "result",
-					Feature:  feature,
-					Status:   "error",
-					ExitCode: 1,
-					Details:  errMsg.Message,
-				}, nil
-			}
-		case <-deadline:
-			return &nodeResult{
-				Type:     "result",
-				Feature:  feature,
-				Status:   "timeout",
-				ExitCode: 3,
-				Details:  fmt.Sprintf("%s did not respond within %s", n.impl, timeout),
-			}, nil
-		}
-	}
+	return n.waitForResult(feature, timeout)
 }
 
 // Close sends a shutdown command and waits for the subprocess to exit.

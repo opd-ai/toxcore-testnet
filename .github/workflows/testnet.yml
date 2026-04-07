@@ -23,7 +23,7 @@ permissions:
 
 # ── Global environment ────────────────────────────────────────────────────────
 env:
-  GO_VERSION: '1.22'
+  GO_VERSION: '1.25'
   RUST_VERSION: 'stable'
   # Intermediate results file path consumed by the report generator.
   TESTNET_RESULTS: ${{ github.workspace }}/testnet-results.json
