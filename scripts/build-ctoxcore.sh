@@ -74,6 +74,10 @@ fi
 # ── Build the C test node ──────────────────────────────────────────────────
 TESTNODE_BUILD="${REPO_ROOT}/vendor/c-testnode-build"
 echo "[build-ctoxcore] Building C test node..."
+
+# Set PKG_CONFIG_PATH so pkg-config finds the locally installed libtoxcore
+export PKG_CONFIG_PATH="${INSTALL_DIR}/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
+
 cmake -B "${TESTNODE_BUILD}" \
     -G Ninja \
     -DCMAKE_BUILD_TYPE=Release \

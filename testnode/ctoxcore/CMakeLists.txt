@@ -8,14 +8,22 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 # The build script (scripts/build-ctoxcore.sh) installs c-toxcore into
 # ${CMAKE_PREFIX_PATH} before invoking cmake, so pkg-config should find it.
 find_package(PkgConfig REQUIRED)
-pkg_check_modules(TOXCORE REQUIRED libtoxcore)
+pkg_check_modules(TOXCORE REQUIRED toxcore)
 
 # ── Target ────────────────────────────────────────────────────────────────────
 add_executable(c-testnode main.c)
 
 target_include_directories(c-testnode PRIVATE ${TOXCORE_INCLUDE_DIRS})
+# Use TOXCORE_LINK_LIBRARIES for proper library path handling
+target_link_directories(c-testnode PRIVATE ${TOXCORE_LIBRARY_DIRS})
 target_link_libraries(c-testnode PRIVATE ${TOXCORE_LIBRARIES})
 target_compile_options(c-testnode PRIVATE ${TOXCORE_CFLAGS_OTHER} -Wall -Wextra)
+
+# Set RPATH so the binary can find libtoxcore at runtime
+set_target_properties(c-testnode PROPERTIES
+    BUILD_RPATH "${TOXCORE_LIBRARY_DIRS}"
+    INSTALL_RPATH "${TOXCORE_LIBRARY_DIRS}"
+)
 
 # ── Install ───────────────────────────────────────────────────────────────────
 install(TARGETS c-testnode RUNTIME DESTINATION bin)

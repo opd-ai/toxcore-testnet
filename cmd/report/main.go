@@ -215,11 +215,11 @@ func parseGoTestJSON(path string) ([]TestResult, error) {
 			continue
 		}
 		payload := line[idx+len(prefix):]
-		var r TestResult
-		if err := json.Unmarshal([]byte(payload), &r); err != nil {
+		var result TestResult
+		if err := json.Unmarshal([]byte(payload), &result); err != nil {
 			continue
 		}
-		results = append(results, r)
+		results = append(results, result)
 	}
 	return results, scanner.Err()
 }
@@ -244,20 +244,20 @@ type summary struct {
 }
 
 func buildSummary(results []TestResult) summary {
-	s := summary{Total: len(results)}
-	for _, r := range results {
-		switch r.Status {
+	summ := summary{Total: len(results)}
+	for _, res := range results {
+		switch res.Status {
 		case "compatible":
-			s.Compatible++
+			summ.Compatible++
 		case "conflicting":
-			s.Conflicting++
+			summ.Conflicting++
 		case "not_implemented":
-			s.NotImplemented++
+			summ.NotImplemented++
 		default:
-			s.Other++
+			summ.Other++
 		}
 	}
-	return s
+	return summ
 }
 
 func writeJSON(results []TestResult, generatedAt string) error {
@@ -294,31 +294,31 @@ func statusEmoji(status string) string {
 func writeMarkdown(results []TestResult, generatedAt string) error {
 	var sb strings.Builder
 
-	s := buildSummary(results)
+	summ := buildSummary(results)
 
 	sb.WriteString("# Toxcore Cross-Implementation Compatibility Report\n\n")
 	sb.WriteString(fmt.Sprintf("Generated: %s\n\n", generatedAt))
 
 	sb.WriteString("## Summary\n\n")
 	sb.WriteString(fmt.Sprintf("| Metric | Count |\n|---|---|\n"))
-	sb.WriteString(fmt.Sprintf("| Total tests | %d |\n", s.Total))
-	sb.WriteString(fmt.Sprintf("| ✅ Compatible | %d |\n", s.Compatible))
-	sb.WriteString(fmt.Sprintf("| ❌ Conflicting | %d |\n", s.Conflicting))
-	sb.WriteString(fmt.Sprintf("| ⚠️  Not implemented | %d |\n", s.NotImplemented))
-	if s.Other > 0 {
-		sb.WriteString(fmt.Sprintf("| ❓ Other | %d |\n", s.Other))
+	sb.WriteString(fmt.Sprintf("| Total tests | %d |\n", summ.Total))
+	sb.WriteString(fmt.Sprintf("| ✅ Compatible | %d |\n", summ.Compatible))
+	sb.WriteString(fmt.Sprintf("| ❌ Conflicting | %d |\n", summ.Conflicting))
+	sb.WriteString(fmt.Sprintf("| ⚠️  Not implemented | %d |\n", summ.NotImplemented))
+	if summ.Other > 0 {
+		sb.WriteString(fmt.Sprintf("| ❓ Other | %d |\n", summ.Other))
 	}
 	sb.WriteString("\n")
 
 	// Group by implementation pair.
 	byPair := map[string][]TestResult{}
 	var pairOrder []string
-	for _, r := range results {
-		key := fmt.Sprintf("%s ↔ %s", r.ImplA, r.ImplB)
+	for _, res := range results {
+		key := fmt.Sprintf("%s ↔ %s", res.ImplA, res.ImplB)
 		if _, ok := byPair[key]; !ok {
 			pairOrder = append(pairOrder, key)
 		}
-		byPair[key] = append(byPair[key], r)
+		byPair[key] = append(byPair[key], res)
 	}
 
 	sb.WriteString("## Results by Implementation Pair\n\n")
@@ -326,13 +326,13 @@ func writeMarkdown(results []TestResult, generatedAt string) error {
 		rows := byPair[pairKey]
 		sb.WriteString(fmt.Sprintf("### %s\n\n", pairKey))
 		sb.WriteString("| Feature | Status | Details |\n|---|---|---|\n")
-		for _, r := range rows {
-			details := strings.ReplaceAll(r.Details, "|", "\\|")
+		for _, res := range rows {
+			details := strings.ReplaceAll(res.Details, "|", "\\|")
 			if len(details) > 120 {
 				details = details[:117] + "..."
 			}
 			sb.WriteString(fmt.Sprintf("| `%s` | %s %s | %s |\n",
-				r.Feature, statusEmoji(r.Status), r.Status, details))
+				res.Feature, statusEmoji(res.Status), res.Status, details))
 		}
 		sb.WriteString("\n")
 	}

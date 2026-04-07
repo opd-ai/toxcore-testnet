@@ -68,6 +68,27 @@ type TestNode struct {
 	Ready nodeReady
 }
 
+// readReadyMessage waits for the "ready" message from a test node with a 5-second timeout.
+// It returns an error if the message is not received, malformed, or has the wrong type.
+func (n *TestNode) readReadyMessage() error {
+	select {
+	case line, ok := <-n.lines:
+		if !ok {
+			return fmt.Errorf("%s: stdout closed before ready", n.impl)
+		}
+		if err := json.Unmarshal([]byte(line), &n.Ready); err != nil {
+			return fmt.Errorf("%s: bad ready message %q: %w", n.impl, line, err)
+		}
+		if n.Ready.Type != "ready" {
+			return fmt.Errorf("%s: expected ready, got %q", n.impl, n.Ready.Type)
+		}
+		return nil
+	case <-time.After(5 * time.Second):
+		_ = n.cmd.Process.Kill()
+		return fmt.Errorf("%s: timed out waiting for ready message", n.impl)
+	}
+}
+
 // StartNode launches the binary at binaryPath, reads its "ready" message, and
 // returns a TestNode ready to accept commands. implName is the human-readable
 // label used in reports (e.g. "go-toxcore").
@@ -110,21 +131,9 @@ func StartNode(binaryPath, implName string) (*TestNode, error) {
 		close(n.lines)
 	}()
 
-	// Wait for the "ready" message (5-second timeout).
-	select {
-	case line, ok := <-n.lines:
-		if !ok {
-			return nil, fmt.Errorf("%s: stdout closed before ready", implName)
-		}
-		if err := json.Unmarshal([]byte(line), &n.Ready); err != nil {
-			return nil, fmt.Errorf("%s: bad ready message %q: %w", implName, line, err)
-		}
-		if n.Ready.Type != "ready" {
-			return nil, fmt.Errorf("%s: expected ready, got %q", implName, n.Ready.Type)
-		}
-	case <-time.After(5 * time.Second):
-		_ = n.cmd.Process.Kill()
-		return nil, fmt.Errorf("%s: timed out waiting for ready message", implName)
+	// Wait for the "ready" message.
+	if err := n.readReadyMessage(); err != nil {
+		return nil, err
 	}
 
 	return n, nil
@@ -174,20 +183,20 @@ func (n *TestNode) RunTest(feature, role, peerToxID string, timeout time.Duratio
 			}
 			switch envelope.Type {
 			case "result":
-				var r nodeResult
-				if err := json.Unmarshal([]byte(line), &r); err != nil {
+				var result nodeResult
+				if err := json.Unmarshal([]byte(line), &result); err != nil {
 					return nil, fmt.Errorf("%s: bad result message: %w", n.impl, err)
 				}
-				return &r, nil
+				return &result, nil
 			case "error":
-				var e nodeError
-				_ = json.Unmarshal([]byte(line), &e)
+				var errMsg nodeError
+				_ = json.Unmarshal([]byte(line), &errMsg)
 				return &nodeResult{
 					Type:     "result",
 					Feature:  feature,
 					Status:   "error",
 					ExitCode: 1,
-					Details:  e.Message,
+					Details:  errMsg.Message,
 				}, nil
 			}
 		case <-deadline:

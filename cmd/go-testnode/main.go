@@ -187,53 +187,65 @@ func (n *node) testFriendRequest(role, peerToxID string) (string, int, string) {
 	}
 }
 
+// testFriendMessageInitiator handles the initiator role for friend_message test.
+func (n *node) testFriendMessageInitiator(peerToxID string) (string, int, string) {
+	const testMsg = "toxcore-testnet-ping"
+
+	// Ensure we are friends first (may already be from testFriendRequest).
+	friendNum, _ := n.tox.AddFriend(peerToxID, "testnet")
+
+	// Wait for friend to be online.
+	deadline := time.Now().Add(60 * time.Second)
+	for time.Now().Before(deadline) {
+		if n.tox.GetFriendConnectionStatus(friendNum) != toxcore.ConnectionNone {
+			break
+		}
+		n.tox.Iterate()
+		time.Sleep(n.tox.IterationInterval())
+	}
+	if n.tox.GetFriendConnectionStatus(friendNum) == toxcore.ConnectionNone {
+		return "conflicting", 3, "friend never came online"
+	}
+
+	// Send message.
+	if _, err := n.tox.FriendSendMessage(friendNum, testMsg, toxcore.MessageTypeNormal); err != nil {
+		return "conflicting", 1, fmt.Sprintf("FriendSendMessage failed: %v", err)
+	}
+
+	// Wait for echo.
+	deadline = time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		for _, m := range n.messages {
+			if m == testMsg {
+				return "compatible", 0, "message sent and echo received"
+			}
+		}
+		n.tox.Iterate()
+		time.Sleep(n.tox.IterationInterval())
+	}
+	return "conflicting", 3, "echo not received within 30s"
+}
+
+// testFriendMessageResponder handles the responder role for friend_message test.
+func (n *node) testFriendMessageResponder() (string, int, string) {
+	// Echo every received message back using simplified callback.
+	// The detailed callback is registered in main; here we just iterate.
+	deadline := time.Now().Add(60 * time.Second)
+	for time.Now().Before(deadline) {
+		n.tox.Iterate()
+		time.Sleep(n.tox.IterationInterval())
+	}
+	return "compatible", 0, "responder ran message-echo loop"
+}
+
 // testFriendMessage: after friends are connected, initiator sends a message
 // and waits for an echo; responder echoes every received message.
 func (n *node) testFriendMessage(role, peerToxID string) (string, int, string) {
-	const testMsg = "toxcore-testnet-ping"
 	switch role {
 	case "initiator":
-		// Ensure we are friends first (may already be from testFriendRequest).
-		// AddFriend takes the hex address string directly.
-		friendNum, _ := n.tox.AddFriend(peerToxID, "testnet")
-		// Wait for friend to be online.
-		deadline := time.Now().Add(60 * time.Second)
-		for time.Now().Before(deadline) {
-			if n.tox.GetFriendConnectionStatus(friendNum) != toxcore.ConnectionNone {
-				break
-			}
-			n.tox.Iterate()
-			time.Sleep(n.tox.IterationInterval())
-		}
-		if n.tox.GetFriendConnectionStatus(friendNum) == toxcore.ConnectionNone {
-			return "conflicting", 3, "friend never came online"
-		}
-		if _, err := n.tox.FriendSendMessage(friendNum, testMsg, toxcore.MessageTypeNormal); err != nil {
-			return "conflicting", 1, fmt.Sprintf("FriendSendMessage failed: %v", err)
-		}
-		// Wait for echo.
-		deadline = time.Now().Add(30 * time.Second)
-		for time.Now().Before(deadline) {
-			for _, m := range n.messages {
-				if m == testMsg {
-					return "compatible", 0, "message sent and echo received"
-				}
-			}
-			n.tox.Iterate()
-			time.Sleep(n.tox.IterationInterval())
-		}
-		return "conflicting", 3, "echo not received within 30s"
-
+		return n.testFriendMessageInitiator(peerToxID)
 	case "responder":
-		// Echo every received message back using simplified callback.
-		// The detailed callback is registered in main; here we just iterate.
-		deadline := time.Now().Add(60 * time.Second)
-		for time.Now().Before(deadline) {
-			n.tox.Iterate()
-			time.Sleep(n.tox.IterationInterval())
-		}
-		return "compatible", 0, "responder ran message-echo loop"
-
+		return n.testFriendMessageResponder()
 	default:
 		return "not_implemented", 2, fmt.Sprintf("unknown role %q", role)
 	}
@@ -285,6 +297,44 @@ func (n *node) runTest(feature, role, peerToxID string) (string, int, string) {
 	default:
 		return "not_implemented", 2, fmt.Sprintf("feature %q not recognised", feature)
 	}
+}
+
+// dispatchCommand processes a single IPC command line and executes the appropriate action.
+// It returns true if the node should continue running, false if it should shut down.
+func (n *node) dispatchCommand(t *toxcore.Tox, line string) bool {
+	var env cmdEnvelope
+	if err := json.Unmarshal([]byte(line), &env); err != nil {
+		emitError(fmt.Sprintf("bad command JSON: %v", err))
+		return true
+	}
+
+	switch env.Cmd {
+	case "bootstrap":
+		var cmd cmdBootstrap
+		if err := json.Unmarshal([]byte(line), &cmd); err != nil {
+			emitError(fmt.Sprintf("bad bootstrap command: %v", err))
+			return true
+		}
+		if err := t.Bootstrap(cmd.Host, uint16(cmd.Port), cmd.Key); err != nil {
+			emitError(fmt.Sprintf("Bootstrap: %v", err))
+		}
+
+	case "run_test":
+		var cmd cmdRunTest
+		if err := json.Unmarshal([]byte(line), &cmd); err != nil {
+			emitError(fmt.Sprintf("bad run_test command: %v", err))
+			return true
+		}
+		status, exitCode, details := n.runTest(cmd.Feature, cmd.Role, cmd.PeerToxID)
+		emitResult(cmd.Feature, status, exitCode, details)
+
+	case "shutdown":
+		return false
+
+	default:
+		emitError(fmt.Sprintf("unknown command %q", env.Cmd))
+	}
+	return true
 }
 
 // ---------------------------------------------------------------------------
@@ -353,39 +403,8 @@ func main() {
 		if line == "" {
 			continue
 		}
-
-		var env cmdEnvelope
-		if err := json.Unmarshal([]byte(line), &env); err != nil {
-			emitError(fmt.Sprintf("bad command JSON: %v", err))
-			continue
-		}
-
-		switch env.Cmd {
-		case "bootstrap":
-			var c cmdBootstrap
-			if err := json.Unmarshal([]byte(line), &c); err != nil {
-				emitError(fmt.Sprintf("bad bootstrap command: %v", err))
-				continue
-			}
-			// Bootstrap takes hex string directly now.
-			if err := t.Bootstrap(c.Host, uint16(c.Port), c.Key); err != nil {
-				emitError(fmt.Sprintf("Bootstrap: %v", err))
-			}
-
-		case "run_test":
-			var c cmdRunTest
-			if err := json.Unmarshal([]byte(line), &c); err != nil {
-				emitError(fmt.Sprintf("bad run_test command: %v", err))
-				continue
-			}
-			status, exitCode, details := n.runTest(c.Feature, c.Role, c.PeerToxID)
-			emitResult(c.Feature, status, exitCode, details)
-
-		case "shutdown":
+		if !n.dispatchCommand(t, line) {
 			return
-
-		default:
-			emitError(fmt.Sprintf("unknown command %q", env.Cmd))
 		}
 	}
 
