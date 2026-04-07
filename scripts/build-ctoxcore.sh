@@ -21,14 +21,25 @@ TESTNODE_DIR="${REPO_ROOT}/testnode/ctoxcore"
 
 mkdir -p "${BIN_DIR}" "${INSTALL_DIR}"
 
-# ── Clone c-toxcore (skip if already present) ──────────────────────────────
+# ── Clone or update c-toxcore ─────────────────────────────────────────────
 if [[ ! -d "${VENDOR_DIR}/.git" ]]; then
     echo "[build-ctoxcore] Cloning TokTok/c-toxcore..."
     git clone --depth=1 \
         https://github.com/TokTok/c-toxcore.git \
         "${VENDOR_DIR}"
 else
-    echo "[build-ctoxcore] c-toxcore already cloned; skipping."
+    echo "[build-ctoxcore] Updating existing c-toxcore checkout..."
+    PREVIOUS_HEAD="$(git -C "${VENDOR_DIR}" rev-parse HEAD 2>/dev/null || true)"
+    git -C "${VENDOR_DIR}" fetch --depth=1 origin
+    git -C "${VENDOR_DIR}" reset --hard FETCH_HEAD
+    CURRENT_HEAD="$(git -C "${VENDOR_DIR}" rev-parse HEAD)"
+
+    if [[ "${PREVIOUS_HEAD}" != "${CURRENT_HEAD}" ]]; then
+        echo "[build-ctoxcore] c-toxcore updated (${PREVIOUS_HEAD:-none} -> ${CURRENT_HEAD}); removing cached build output."
+        rm -rf "${VENDOR_DIR}/_build"
+    else
+        echo "[build-ctoxcore] c-toxcore already up to date."
+    fi
 fi
 
 # ── Build c-toxcore ────────────────────────────────────────────────────────

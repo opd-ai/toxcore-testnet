@@ -26,7 +26,7 @@ type TestResult struct {
 //	Both sides exit_code == 0          → "compatible"
 //	Both sides participate, any non-0  → "conflicting"
 //	Either side reports not_implemented → "not_implemented"
-//	Timeout or node error              → "error" (preserved as-is for transparency)
+//	Timeout or IPC error               → "conflicting" (exit code 3 or 1 respectively)
 func classifyResults(feature, implA, implB string, resA, resB *nodeResult) TestResult {
 	// Prefer the initiator's (A's) exit code as the representative.
 	exitCode := resA.ExitCode
@@ -80,17 +80,17 @@ func resultsFile() string {
 
 // writeResults serialises the accumulated TestResult slice to a JSON file so
 // that the report generator can consume it independently of go test output.
+// Failures are fatal because a missing/partial results file can silently break
+// downstream CI report generation.
 func writeResults(t *testing.T, results []TestResult) {
 	t.Helper()
 	path := resultsFile()
 	data, err := json.MarshalIndent(results, "", "  ")
 	if err != nil {
-		t.Logf("warning: could not marshal results: %v", err)
-		return
+		t.Fatalf("could not marshal results: %v", err)
 	}
 	if err := os.WriteFile(path, data, 0644); err != nil {
-		t.Logf("warning: could not write results to %s: %v", path, err)
-		return
+		t.Fatalf("could not write results to %s: %v", path, err)
 	}
 	t.Logf("intermediate results written to %s", path)
 }

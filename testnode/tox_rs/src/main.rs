@@ -189,15 +189,20 @@ async fn test_friend_request(node: &mut Node, role: &str, peer_tox_id: &str)
             // Accept incoming friend requests automatically.
             let res = timeout(Duration::from_secs(60), async {
                 loop {
-                    if let Some(_req) = node.tox.next_friend_request().await {
-                        return;
+                    if let Some(req) = node.tox.next_friend_request().await {
+                        // Explicitly accept the request so the peer comes online.
+                        if let Err(e) = node.tox.add_friend_norequest(&req.public_key) {
+                            return Err(format!("add_friend_norequest: {e:?}"));
+                        }
+                        return Ok(());
                     }
                     tokio::time::sleep(Duration::from_millis(200)).await;
                 }
             })
             .await;
             match res {
-                Ok(()) => ("compatible".into(), 0, "friend request received and accepted".into()),
+                Ok(Ok(())) => ("compatible".into(), 0, "friend request received and accepted".into()),
+                Ok(Err(e)) => ("conflicting".into(), 1, e),
                 Err(_) => ("conflicting".into(), 3, "no friend request received within 60s".into()),
             }
         }

@@ -80,8 +80,9 @@ jobs:
           sudo apt-get install -yq \
             cmake ninja-build libsodium-dev pkg-config
 
-      # Cache the compiled c-toxcore library; key includes the build script
-      # so any script change invalidates the cache.
+      # Cache the compiled c-toxcore library.
+      # Key includes the build script hash and the current date for scheduled
+      # (nightly) runs so upstream drift is always picked up.
       - name: Cache c-toxcore build
         uses: actions/cache@v4
         id: cache-ctoxcore
@@ -89,7 +90,7 @@ jobs:
           path: |
             vendor/c-toxcore
             vendor/c-toxcore-install
-          key: c-toxcore-${{ runner.os }}-${{ hashFiles('scripts/build-ctoxcore.sh') }}-v1
+          key: c-toxcore-${{ runner.os }}-${{ hashFiles('scripts/build-ctoxcore.sh') }}-${{ github.event_name == 'schedule' && github.run_id || 'stable' }}-v1
 
       - name: Build c-toxcore + C test node
         run: bash scripts/build-ctoxcore.sh
@@ -114,12 +115,14 @@ jobs:
         with:
           toolchain: ${{ env.RUST_VERSION }}
 
-      # rust-cache scopes by Cargo.lock hash → cache is invalidated whenever
-      # any dependency version changes.
+      # Scope the Rust cache explicitly using Cargo.toml manifests and the
+      # build script, since this repository does not commit a Cargo.lock
+      # (the tox-rs/tox dependency is a git source without a lockfile entry).
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: testnode/tox_rs
+          key: tox-rs-${{ hashFiles('testnode/tox_rs/**/Cargo.toml', 'scripts/build-tox-rs.sh') }}
 
       - name: Build rust-testnode binary
         run: bash scripts/build-tox-rs.sh
@@ -181,9 +184,12 @@ jobs:
 
       # Run the full compatibility matrix.  continue-on-error is intentional:
       # failing tests should still produce a report rather than stopping the job.
+      # pipefail ensures go test failures (compile errors, panics, timeouts) are
+      # visible even though output is also piped to tee.
       - name: Run cross-implementation tests
         id: run_tests
         run: |
+          set -o pipefail
           go test -v -json -timeout 25m ./integration/... \
             -args \
               -go-node="${PWD}/bin/go-testnode" \
@@ -197,6 +203,9 @@ jobs:
       # Generate the deterministic JSON + Markdown report from go test -json
       # output and the intermediate results file written by the test harness.
       # No LLM, AI, or generative model is invoked at any point.
+      # SOURCE_DATE_EPOCH is set so the generated_at timestamp is reproducible
+      # for identical inputs (GITHUB_RUN_STARTED_AT is used as fallback inside
+      # cmd/report when SOURCE_DATE_EPOCH is not available).
       - name: Generate compatibility report
         run: |
           go run ./cmd/report \
@@ -206,6 +215,7 @@ jobs:
             -md-out=compatibility-report.md
         env:
           TESTNET_RESULTS: ${{ env.TESTNET_RESULTS }}
+          GITHUB_RUN_STARTED_AT: ${{ github.event.repository.updated_at }}
 
       # Append the Markdown report to the job summary so it is visible in the
       # GitHub Actions UI without downloading an artifact.

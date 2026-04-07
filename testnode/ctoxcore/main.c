@@ -112,27 +112,58 @@ static int json_int(const char *json, const char *key, int *val)
 }
 
 /* ── JSON output helpers ──────────────────────────────────────────────────── */
+
+/* Write a JSON-safe string value (without surrounding quotes) to stdout. */
+static void json_write_escaped(FILE *out, const char *s)
+{
+    if (s == NULL) return;
+    for (const unsigned char *p = (const unsigned char *)s; *p != '\0'; ++p) {
+        switch (*p) {
+            case '"':  fputs("\\\"", out); break;
+            case '\\': fputs("\\\\", out); break;
+            case '\b': fputs("\\b",  out); break;
+            case '\f': fputs("\\f",  out); break;
+            case '\n': fputs("\\n",  out); break;
+            case '\r': fputs("\\r",  out); break;
+            case '\t': fputs("\\t",  out); break;
+            default:
+                if (*p < 0x20)
+                    fprintf(out, "\\u%04x", (unsigned)*p);
+                else
+                    fputc(*p, out);
+                break;
+        }
+    }
+}
+
 static void emit_ready(const char *tox_id, const char *dht_key, uint16_t port)
 {
-    printf("{\"type\":\"ready\",\"impl\":\"c-toxcore\","
-           "\"tox_id\":\"%s\",\"dht_key\":\"%s\",\"tox_port\":%u}\n",
-           tox_id, dht_key, (unsigned)port);
+    fputs("{\"type\":\"ready\",\"impl\":\"c-toxcore\",\"tox_id\":\"", stdout);
+    json_write_escaped(stdout, tox_id);
+    fputs("\",\"dht_key\":\"", stdout);
+    json_write_escaped(stdout, dht_key);
+    fprintf(stdout, "\",\"tox_port\":%u}\n", (unsigned)port);
     fflush(stdout);
 }
 
 static void emit_result(const char *feature, const char *status,
                         int exit_code, const char *details)
 {
-    printf("{\"type\":\"result\",\"feature\":\"%s\",\"status\":\"%s\","
-           "\"exit_code\":%d,\"details\":\"%s\"}\n",
-           feature, status, exit_code, details);
+    fputs("{\"type\":\"result\",\"feature\":\"", stdout);
+    json_write_escaped(stdout, feature);
+    fputs("\",\"status\":\"", stdout);
+    json_write_escaped(stdout, status);
+    fprintf(stdout, "\",\"exit_code\":%d,\"details\":\"", exit_code);
+    json_write_escaped(stdout, details);
+    fputs("\"}\n", stdout);
     fflush(stdout);
 }
 
 static void emit_error(const char *msg)
 {
-    fprintf(stdout,
-            "{\"type\":\"error\",\"message\":\"%s\"}\n", msg);
+    fputs("{\"type\":\"error\",\"message\":\"", stdout);
+    json_write_escaped(stdout, msg);
+    fputs("\"}\n", stdout);
     fflush(stdout);
 }
 

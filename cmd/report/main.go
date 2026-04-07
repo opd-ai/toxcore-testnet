@@ -22,6 +22,7 @@ import (
 	"log"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -70,6 +71,8 @@ func main() {
 	log.SetFlags(0)
 	log.SetPrefix("[report] ")
 
+	ts := reportTimestamp()
+
 	results, err := loadResults()
 	if err != nil {
 		log.Fatalf("loading results: %v", err)
@@ -79,14 +82,34 @@ func main() {
 		log.Println("warning: no results found; generating empty report")
 	}
 
-	if err := writeJSON(results); err != nil {
+	if err := writeJSON(results, ts); err != nil {
 		log.Fatalf("writing JSON report: %v", err)
 	}
-	if err := writeMarkdown(results); err != nil {
+	if err := writeMarkdown(results, ts); err != nil {
 		log.Fatalf("writing Markdown report: %v", err)
 	}
 
 	log.Printf("report written to %s and %s", *flagJSONOut, *flagMDOut)
+}
+
+// reportTimestamp returns a stable RFC-3339 UTC timestamp for report headers.
+//
+// Precedence (most to least deterministic):
+//  1. SOURCE_DATE_EPOCH env var (Unix seconds) — standard for reproducible builds.
+//  2. GITHUB_RUN_STARTED_AT env var — set by GitHub Actions on every run.
+//  3. time.Now() — fallback for local runs.
+func reportTimestamp() string {
+	if v := os.Getenv("SOURCE_DATE_EPOCH"); v != "" {
+		if secs, err := strconv.ParseInt(v, 10, 64); err == nil {
+			return time.Unix(secs, 0).UTC().Format(time.RFC3339)
+		}
+	}
+	if v := os.Getenv("GITHUB_RUN_STARTED_AT"); v != "" {
+		if t, err := time.Parse(time.RFC3339, v); err == nil {
+			return t.UTC().Format(time.RFC3339)
+		}
+	}
+	return time.Now().UTC().Format(time.RFC3339)
 }
 
 // ---------------------------------------------------------------------------
@@ -237,9 +260,9 @@ func buildSummary(results []TestResult) summary {
 	return s
 }
 
-func writeJSON(results []TestResult) error {
+func writeJSON(results []TestResult, generatedAt string) error {
 	artifact := reportArtifact{
-		GeneratedAt: time.Now().UTC().Format(time.RFC3339),
+		GeneratedAt: generatedAt,
 		Results:     results,
 		Summary:     buildSummary(results),
 	}
@@ -268,13 +291,13 @@ func statusEmoji(status string) string {
 	}
 }
 
-func writeMarkdown(results []TestResult) error {
+func writeMarkdown(results []TestResult, generatedAt string) error {
 	var sb strings.Builder
 
 	s := buildSummary(results)
 
 	sb.WriteString("# Toxcore Cross-Implementation Compatibility Report\n\n")
-	sb.WriteString(fmt.Sprintf("Generated: %s\n\n", time.Now().UTC().Format(time.RFC3339)))
+	sb.WriteString(fmt.Sprintf("Generated: %s\n\n", generatedAt))
 
 	sb.WriteString("## Summary\n\n")
 	sb.WriteString(fmt.Sprintf("| Metric | Count |\n|---|---|\n"))

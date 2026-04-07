@@ -203,8 +203,15 @@ func (n *TestNode) RunTest(feature, role, peerToxID string, timeout time.Duratio
 }
 
 // Close sends a shutdown command and waits for the subprocess to exit.
+// The shutdown command is sent first so the child process can flush its stdout
+// before exiting; the done channel is closed after Wait returns so the
+// stdout-reader goroutine keeps draining the pipe and prevents a deadlock.
 func (n *TestNode) Close() error {
+	err := n.sendCmd(cmdShutdown{Cmd: "shutdown"})
+	waitErr := n.cmd.Wait()
 	close(n.done)
-	_ = n.sendCmd(cmdShutdown{Cmd: "shutdown"})
-	return n.cmd.Wait()
+	if err != nil {
+		return err
+	}
+	return waitErr
 }

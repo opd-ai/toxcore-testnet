@@ -1,6 +1,7 @@
 package integration
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -99,6 +100,12 @@ func TestCompatibility(t *testing.T) {
 			t.Run(name, func(t *testing.T) {
 				t.Parallel()
 				result := runCompatTest(t, feat, p)
+
+				// Emit a parseable log line so the report generator's NDJSON
+				// fallback path can reconstruct results even if the intermediate
+				// JSON file is not written (e.g. early process exit).
+				resultJSON, _ := json.Marshal(result)
+				t.Logf("RESULT_JSON: %s", resultJSON)
 
 				mu.Lock()
 				results = append(results, result)
