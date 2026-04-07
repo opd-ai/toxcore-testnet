@@ -390,8 +390,8 @@ func main() {
 	opts := toxcore.NewOptions()
 	opts.IPv6Enabled = false
 	opts.UDPEnabled = true
-	opts.StartPort = startPort
-	opts.EndPort = endPort
+	opts.StartPort = uint16(startPort)
+	opts.EndPort = uint16(endPort)
 
 	log.Printf("go-testnode: attempting to bind UDP port range %d-%d", startPort, endPort)
 
