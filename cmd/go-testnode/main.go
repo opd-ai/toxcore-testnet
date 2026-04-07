@@ -368,10 +368,19 @@ func main() {
 	// Read port range from environment (set by the integration test harness).
 	// Each node gets a unique, non-overlapping port so parallel test instances
 	// don't contend for the same ports.
-	startPort := parsePort("TOX_PORT_START", defaultUDPPortStart)
-	endPort := parsePort("TOX_PORT_END", defaultUDPPortEnd)
+	startPort := getEnvInt("TOX_PORT_START", defaultUDPPortStart)
+	endPort := getEnvInt("TOX_PORT_END", defaultUDPPortEnd)
 
-	// Ensure the range is not inverted; fall back to defaults if so.
+	// Validate parsed values. Fall back to defaults for out-of-range or
+	// inverted ranges so the node always starts with sane options.
+	if startPort < 1 || startPort > 65535 {
+		log.Printf("go-testnode: invalid TOX_PORT_START=%d, using default %d", startPort, defaultUDPPortStart)
+		startPort = defaultUDPPortStart
+	}
+	if endPort < 1 || endPort > 65535 {
+		log.Printf("go-testnode: invalid TOX_PORT_END=%d, using default %d", endPort, defaultUDPPortEnd)
+		endPort = defaultUDPPortEnd
+	}
 	if endPort < startPort {
 		log.Printf("go-testnode: TOX_PORT_END=%d < TOX_PORT_START=%d, using defaults", endPort, startPort)
 		startPort = defaultUDPPortStart
@@ -456,22 +465,16 @@ func main() {
 	}
 }
 
-// parsePort reads a UDP port number from an environment variable.
-// It validates the value is in [1, 65535] and returns it as uint16.
-// On any error or out-of-range value it returns defaultVal.
-func parsePort(key string, defaultVal uint16) uint16 {
+// getEnvInt reads an integer from an environment variable, returning defaultVal
+// if the variable is unset or cannot be parsed.
+func getEnvInt(key string, defaultVal int) int {
 	s := os.Getenv(key)
 	if s == "" {
 		return defaultVal
 	}
 	v, err := strconv.Atoi(s)
 	if err != nil {
-		log.Printf("go-testnode: %s=%q is not a valid integer, using default %d", key, s, defaultVal)
 		return defaultVal
 	}
-	if v < 1 || v > math.MaxUint16 {
-		log.Printf("go-testnode: %s=%d out of range [1,%d], using default %d", key, v, math.MaxUint16, defaultVal)
-		return defaultVal
-	}
-	return uint16(v)
+	return v
 }
