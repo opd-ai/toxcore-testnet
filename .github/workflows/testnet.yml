@@ -7,9 +7,15 @@ on:
   pull_request:
     branches: [main, master]
   schedule:
-    # Nightly at 02:00 UTC — catches upstream implementation drift.
-    - cron: '0 2 * * *'
+    # Hourly — catches upstream implementation drift as soon as possible.
+    - cron: '0 * * * *'
   workflow_dispatch:
+
+# Cancel any in-progress run of this workflow on the same branch so that
+# hourly schedule runs never pile up.
+concurrency:
+  group: testnet-${{ github.ref }}
+  cancel-in-progress: true
 
 # ── Permissions ───────────────────────────────────────────────────────────────
 permissions:
@@ -81,8 +87,10 @@ jobs:
             cmake ninja-build libsodium-dev pkg-config
 
       # Cache the compiled c-toxcore library.
-      # Key includes the build script hash and the current date for scheduled
-      # (nightly) runs so upstream drift is always picked up.
+      # The key always includes github.run_id so the exact key never matches,
+      # forcing the build script to fetch the latest upstream HEAD every time.
+      # restore-keys lets us reuse a previous checkout/build to speed things up
+      # when the upstream HEAD has not changed.
       - name: Cache c-toxcore build
         uses: actions/cache@v4
         id: cache-ctoxcore
@@ -90,7 +98,9 @@ jobs:
           path: |
             vendor/c-toxcore
             vendor/c-toxcore-install
-          key: c-toxcore-${{ runner.os }}-${{ hashFiles('scripts/build-ctoxcore.sh') }}-${{ github.event_name == 'schedule' && github.run_id || 'stable' }}-v1
+          key: c-toxcore-${{ runner.os }}-${{ hashFiles('scripts/build-ctoxcore.sh') }}-${{ github.run_id }}-v1
+          restore-keys: |
+            c-toxcore-${{ runner.os }}-${{ hashFiles('scripts/build-ctoxcore.sh') }}-
 
       - name: Build c-toxcore + C test node
         run: bash scripts/build-ctoxcore.sh
@@ -253,3 +263,98 @@ jobs:
             exit 1
           fi
           echo "No conflicting results. Testnet passed."
+
+  # ── 5. Publish results to GitHub Pages ─────────────────────────────────────
+  #
+  # Deploys the compatibility report as an HTML page to GitHub Pages so that
+  # results are publicly visible regardless of whether tests passed or failed.
+  publish-pages:
+    name: Publish Results to GitHub Pages
+    runs-on: ubuntu-22.04
+    needs: [integration-tests]
+    if: always() && needs.integration-tests.result != 'cancelled'
+    permissions:
+      pages: write
+      id-token: write
+    concurrency:
+      group: pages
+      cancel-in-progress: true
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Download compatibility report
+        id: download
+        uses: actions/download-artifact@v4
+        with:
+          name: compatibility-report
+          path: _report
+        continue-on-error: true
+
+      - name: Prepare site source
+        if: steps.download.outcome == 'success'
+        run: |
+          mkdir -p site/_layouts
+
+          # Minimal HTML layout with clean styling
+          cat > site/_layouts/default.html << 'LAYOUT'
+          <!DOCTYPE html>
+          <html lang="en">
+          <head>
+            <meta charset="utf-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+            <title>{{ page.title | default: site.title }}</title>
+            <style>
+              body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; max-width: 960px; margin: 0 auto; padding: 2rem; line-height: 1.6; color: #24292f; }
+              table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
+              th, td { border: 1px solid #d0d7de; padding: 8px 12px; text-align: left; }
+              th { background: #f6f8fa; font-weight: 600; }
+              tr:nth-child(even) { background: #f6f8fa; }
+              code { background: #f6f8fa; padding: 2px 6px; border-radius: 3px; font-size: 0.9em; }
+              h1 { border-bottom: 1px solid #d0d7de; padding-bottom: 0.3em; }
+              h2 { border-bottom: 1px solid #d0d7de; padding-bottom: 0.3em; margin-top: 1.5em; }
+              h3 { margin-top: 1.5em; }
+              blockquote { border-left: 4px solid #d0d7de; margin: 1em 0; padding: 0.5em 1em; color: #57606a; }
+            </style>
+          </head>
+          <body>
+            {{ content }}
+          </body>
+          </html>
+          LAYOUT
+
+          # Add Jekyll front matter so Markdown renders as HTML
+          {
+            echo "---"
+            echo "layout: default"
+            echo "title: Toxcore Testnet Results"
+            echo "---"
+            echo ""
+            cat _report/compatibility-report.md
+          } > site/index.md
+
+          # Serve the JSON report for programmatic consumers
+          cp _report/compatibility-report.json site/
+
+      - name: Setup Pages
+        if: steps.download.outcome == 'success'
+        uses: actions/configure-pages@v5
+
+      - name: Build with Jekyll
+        if: steps.download.outcome == 'success'
+        uses: actions/jekyll-build-pages@v1
+        with:
+          source: site
+          destination: ./_site
+
+      - name: Upload pages artifact
+        if: steps.download.outcome == 'success'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ./_site
+
+      - name: Deploy to GitHub Pages
+        if: steps.download.outcome == 'success'
+        id: deployment
+        uses: actions/deploy-pages@v4
