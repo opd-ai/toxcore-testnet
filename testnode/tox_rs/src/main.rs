@@ -124,8 +124,11 @@ async fn main() {
 
         match cmd {
             InCmd::Bootstrap { .. } => {
-                // Cannot bootstrap - no Tox instance
-                emit_error(NOT_IMPL_REASON);
+                // Cannot bootstrap - no Tox instance.  Log to stderr instead
+                // of emitting an IPC error to stdout; the harness does not
+                // expect a response to bootstrap commands and writing to stdout
+                // would pollute the IPC channel.
+                eprintln!("bootstrap: {}", NOT_IMPL_REASON);
             }
 
             InCmd::RunTest { feature, .. } => {

@@ -316,7 +316,11 @@ func (n *node) dispatchCommand(t *toxcore.Tox, line string) bool {
 			return true
 		}
 		if err := t.Bootstrap(cmd.Host, uint16(cmd.Port), cmd.Key); err != nil {
-			emitError(fmt.Sprintf("Bootstrap: %v", err))
+			// Log bootstrap failures to stderr, not IPC stdout.
+			// The harness does not expect a response to bootstrap commands,
+			// so writing to stdout would pollute the IPC channel and cause
+			// RunTest to consume the error instead of the actual test result.
+			log.Printf("bootstrap %s:%d: %v", cmd.Host, cmd.Port, err)
 		}
 
 	case "run_test":
