@@ -833,6 +833,47 @@ static int parse_port_env(const char *env_val, int default_val)
     return (int)v;
 }
 
+/* ── raw stdin line reader ─────────────────────────────────────────────────
+ *
+ * The previous implementation used select() + fgets().  This is broken
+ * because fgets() uses stdio buffering: a single read() syscall may pull
+ * multiple lines into the internal FILE* buffer, but select() only sees
+ * the file descriptor.  Once fgets() has drained the fd into the stdio
+ * buffer, select() reports "no data" even though complete lines are
+ * available — so commands such as "run_test" that arrive right after
+ * "bootstrap" are never dispatched.
+ *
+ * The fix is to bypass stdio entirely and use read() directly on
+ * STDIN_FILENO, maintaining our own line buffer.
+ */
+static char  g_stdin_buf[CMD_BUF];
+static size_t g_stdin_len = 0;
+
+/* Process and dispatch all complete lines currently in g_stdin_buf. */
+static void process_stdin_lines(void)
+{
+    char *nl;
+    while (g_running &&
+           (nl = memchr(g_stdin_buf, '\n', g_stdin_len)) != NULL) {
+        *nl = '\0';
+        size_t line_len = (size_t)(nl - g_stdin_buf);
+
+        /* Strip trailing \r */
+        if (line_len > 0 && g_stdin_buf[line_len - 1] == '\r')
+            g_stdin_buf[line_len - 1] = '\0';
+
+        if (g_stdin_buf[0] != '\0') {
+            fprintf(stderr, "[c-testnode] dispatch: %.60s...\n", g_stdin_buf);
+            dispatch(g_stdin_buf);
+        }
+
+        /* Shift remaining data to the front of the buffer. */
+        size_t consumed = (size_t)(nl - g_stdin_buf) + 1;
+        g_stdin_len -= consumed;
+        memmove(g_stdin_buf, nl + 1, g_stdin_len);
+    }
+}
+
 int main(void)
 {
     /* Read port range from environment (set by the integration test harness).
@@ -847,6 +888,9 @@ int main(void)
         end_port   = 33545;
     }
 
+    fprintf(stderr, "[c-testnode] starting: port range %d-%d\n",
+            start_port, end_port);
+
     /* Initialise Tox. */
     struct Tox_Options *opts = tox_options_new(NULL);
     tox_options_set_ipv6_enabled(opts, false);
@@ -859,8 +903,11 @@ int main(void)
     tox_options_free(opts);
 
     if (!g_tox) {
-        char msg[64];
-        snprintf(msg, sizeof(msg), "tox_new failed: %d", (int)err);
+        char msg[128];
+        snprintf(msg, sizeof(msg),
+                 "tox_new failed: error %d (port range %d-%d)",
+                 (int)err, start_port, end_port);
+        fprintf(stderr, "[c-testnode] %s\n", msg);
         emit_error(msg);
         return 1;
     }
@@ -889,10 +936,13 @@ int main(void)
     TOX_ERR_GET_PORT perr;
     uint16_t udp_port = tox_self_get_udp_port(g_tox, &perr);
 
+    fprintf(stderr, "[c-testnode] ready: port=%u tox_id=%.16s...\n",
+            (unsigned)udp_port, addr_hex);
     emit_ready(addr_hex, dht_hex, udp_port);
 
-    /* Command loop: read JSON lines from stdin; run tox_iterate in between. */
-    char line[CMD_BUF];
+    /* Command loop: read JSON lines from stdin using raw I/O;
+     * run tox_iterate in between.  We use read() instead of fgets() to
+     * avoid the select-vs-stdio-buffering bug described above. */
     struct timeval tv;
     fd_set fds;
 
@@ -909,13 +959,17 @@ int main(void)
 
         int ready = select(STDIN_FILENO + 1, &fds, NULL, NULL, &tv);
         if (ready > 0) {
-            if (!fgets(line, sizeof(line), stdin)) break;
-            /* Remove trailing newline. */
-            line[strcspn(line, "\r\n")] = '\0';
-            if (strlen(line) > 0) dispatch(line);
+            ssize_t n = read(STDIN_FILENO,
+                             g_stdin_buf + g_stdin_len,
+                             sizeof(g_stdin_buf) - g_stdin_len - 1);
+            if (n <= 0) break; /* EOF or error */
+            g_stdin_len += (size_t)n;
         } else if (ready < 0 && errno != EINTR) {
             break;
         }
+
+        /* Dispatch any complete lines that are now in the buffer. */
+        process_stdin_lines();
     }
 
     tox_kill(g_tox);
