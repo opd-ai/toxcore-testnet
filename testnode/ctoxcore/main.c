@@ -964,13 +964,29 @@ int main(void)
             ssize_t n = read(STDIN_FILENO,
                              g_stdin_buf + g_stdin_len,
                              sizeof(g_stdin_buf) - g_stdin_len - 1);
-            if (n <= 0) break; /* EOF or error */
+            if (n < 0) {
+                if (errno == EINTR) continue;
+                fprintf(stderr, "[c-testnode] read(stdin) failed: %s\n",
+                        strerror(errno));
+                break;
+            }
+            if (n == 0) break; /* EOF */
             g_stdin_len += (size_t)n;
         } else if (ready > 0) {
-            /* Buffer full without a complete line — discard and log. */
+            /* Buffer full without a complete line — discard the buffer and
+             * drain the remainder of the overlong line from stdin so that
+             * a partial tail is never dispatched as a standalone command. */
             fprintf(stderr, "[c-testnode] stdin buffer full (%zu bytes) "
-                    "without newline; discarding\n", g_stdin_len);
+                    "without newline; discarding until next newline\n",
+                    g_stdin_len);
             g_stdin_len = 0;
+            char drain[256];
+            int found_nl = 0;
+            while (!found_nl) {
+                ssize_t n = read(STDIN_FILENO, drain, sizeof(drain));
+                if (n <= 0) { g_running = 0; break; } /* EOF or error */
+                if (memchr(drain, '\n', (size_t)n)) found_nl = 1;
+            }
         } else if (ready < 0 && errno != EINTR) {
             break;
         }
