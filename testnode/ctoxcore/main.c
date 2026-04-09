@@ -863,7 +863,9 @@ static void process_stdin_lines(void)
             g_stdin_buf[line_len - 1] = '\0';
 
         if (g_stdin_buf[0] != '\0') {
-            fprintf(stderr, "[c-testnode] dispatch: %.60s...\n", g_stdin_buf);
+            fprintf(stderr, "[c-testnode] dispatch (%zu bytes): %.120s%s\n",
+                    line_len, g_stdin_buf,
+                    line_len > 120 ? "..." : "");
             dispatch(g_stdin_buf);
         }
 
@@ -958,12 +960,17 @@ int main(void)
         tv.tv_usec = (long)interval_ms * 1000L;
 
         int ready = select(STDIN_FILENO + 1, &fds, NULL, NULL, &tv);
-        if (ready > 0) {
+        if (ready > 0 && g_stdin_len < sizeof(g_stdin_buf) - 1) {
             ssize_t n = read(STDIN_FILENO,
                              g_stdin_buf + g_stdin_len,
                              sizeof(g_stdin_buf) - g_stdin_len - 1);
             if (n <= 0) break; /* EOF or error */
             g_stdin_len += (size_t)n;
+        } else if (ready > 0) {
+            /* Buffer full without a complete line — discard and log. */
+            fprintf(stderr, "[c-testnode] stdin buffer full (%zu bytes) "
+                    "without newline; discarding\n", g_stdin_len);
+            g_stdin_len = 0;
         } else if (ready < 0 && errno != EINTR) {
             break;
         }
